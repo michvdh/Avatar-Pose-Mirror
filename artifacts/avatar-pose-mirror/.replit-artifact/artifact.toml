@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "3D Avatar Pose Mirror"
+version = "1.0.0"
+id = "artifacts/avatar-pose-mirror"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18548
+
+[services.development]
+run = "pnpm --filter @workspace/avatar-pose-mirror run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/avatar-pose-mirror", "run", "build" ]
+publicDir = "artifacts/avatar-pose-mirror/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18548"
+BASE_PATH = "/"
