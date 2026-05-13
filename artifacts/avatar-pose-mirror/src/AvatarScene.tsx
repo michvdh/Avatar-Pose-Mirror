@@ -125,13 +125,15 @@ export default function AvatarScene() {
 
         const chains: BoneChain[] = [];
 
+        // Mirror mapping: avatar's LEFT arm (appears on RIGHT of screen) ← user's RIGHT arm (MP 12→14→16)
+        //                 avatar's RIGHT arm (appears on LEFT of screen) ← user's LEFT arm (MP 11→13→15)
         if (rUpperArm && rForeArm) {
           chains.push({
             bone: rUpperArm,
             child: rForeArm,
             restLocalQuat: rUpperArm.quaternion.clone(),
-            mpParentIdx: 11,
-            mpChildIdx: 13,
+            mpParentIdx: 12,
+            mpChildIdx: 14,
           });
         }
         if (rForeArm && rHand) {
@@ -139,8 +141,8 @@ export default function AvatarScene() {
             bone: rForeArm,
             child: rHand,
             restLocalQuat: rForeArm.quaternion.clone(),
-            mpParentIdx: 13,
-            mpChildIdx: 15,
+            mpParentIdx: 14,
+            mpChildIdx: 16,
           });
         }
         if (lUpperArm && lForeArm) {
@@ -148,8 +150,8 @@ export default function AvatarScene() {
             bone: lUpperArm,
             child: lForeArm,
             restLocalQuat: lUpperArm.quaternion.clone(),
-            mpParentIdx: 12,
-            mpChildIdx: 14,
+            mpParentIdx: 11,
+            mpChildIdx: 13,
           });
         }
         if (lForeArm && lHand) {
@@ -157,8 +159,8 @@ export default function AvatarScene() {
             bone: lForeArm,
             child: lHand,
             restLocalQuat: lForeArm.quaternion.clone(),
-            mpParentIdx: 14,
-            mpChildIdx: 16,
+            mpParentIdx: 13,
+            mpChildIdx: 15,
           });
         }
 
