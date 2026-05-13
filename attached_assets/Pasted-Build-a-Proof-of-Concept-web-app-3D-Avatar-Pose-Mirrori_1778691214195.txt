@@ -1,0 +1,65 @@
+Build a Proof of Concept web app: 3D Avatar Pose Mirroring via Webcam (React + Vite)
+
+Create a React + Vite web app that uses the device webcam and MediaPipe Pose to track the user's upper body in real time, then animates a 3D avatar (.glb file) in Three.js to mirror the user like a reflection.
+
+Stack
+
+React 18 + Vite
+Three.js (three) + @types/three
+MediaPipe Pose (@mediapipe/pose)
+No other UI libraries needed
+Requirements:
+
+Layout
+
+Full-screen Three.js canvas as the background (black).
+A 200×150px webcam <video> element fixed in the bottom-right corner, mirrored via CSS (transform: scaleX(-1)).
+A small status string displayed as a text overlay in the top-left.
+Component structure
+
+App.tsx — root, renders <AvatarScene />
+AvatarScene.tsx — main component holding all logic
+useMediaPipePose.ts — custom hook that initializes MediaPipe Pose, attaches it to a video element ref, and calls an onResults callback each frame
+boneUtils.ts — pure utility: findBone(root, keywords[]) and aimBone(bone, child, restLocalQuat, targetWorldDir) helpers
+Three.js scene (inside AvatarScene.tsx via useEffect)
+
+Create renderer, scene, perspective camera. Renderer canvas fills the viewport, resizes with window.
+Lighting: AmbientLight + DirectionalLight from front-above.
+Load avatar.glb via GLTFLoader from three/examples/jsm/loaders/GLTFLoader.
+Scale avatar by 0.1. After loading, compute bounding box and position camera to frame upper body.
+Run renderer.render(scene, camera) in a requestAnimationFrame loop.
+Bone discovery (in boneUtils.ts)
+
+findBone(root, keywords): traverse the avatar and return the first Object3D whose lowercased name contains all keywords. Try multiple fallback keyword sets for Mixamo naming conventions:
+Upper arm: ["leftarm"] / ["upperarm","l"] / ["arm","l"] (and right equivalents)
+Forearm: ["leftforearm"] / ["forearm","l"] / ["lowerarm","l"]
+Hand/wrist: ["lefthand"] / ["hand","l"] / ["wrist","l"]
+Store 4 bone chains (each with { bone, child, restLocalQuat, mpParentIdx, mpChildIdx }):
+Avatar RIGHT upper arm + forearm ← MediaPipe indices 11→13→15 (user's left arm)
+Avatar LEFT upper arm + forearm ← MediaPipe indices 12→14→16 (user's right arm)
+Bone aiming algorithm (in boneUtils.ts, called per frame per chain)
+
+aimBone(bone, child, restLocalQuat, targetWorldDir):
+  1. bone.quaternion.copy(restLocalQuat)
+  2. bone.updateMatrixWorld(true); child.updateMatrixWorld(true)
+  3. restWorldDir = (child.worldPos - bone.worldPos).normalize()
+  4. restWorldQuat = bone.getWorldQuaternion(...)
+  5. delta = Quaternion.setFromUnitVectors(restWorldDir, targetWorldDir)
+  6. newWorldQuat = delta * restWorldQuat
+  7. bone.quaternion = parentWorldQuat.invert() * newWorldQuat
+  8. bone.updateMatrixWorld(true)
+
+Per-frame pose application
+
+For each chain, get landmarks at mpParentIdx and mpChildIdx.
+Skip if visibility < 0.3.
+Compute: dx = -(child.x - parent.x), dy = -(child.y - parent.y) — negating X mirrors horizontally, negating Y flips image-down to world-up.
+targetDir = new Vector3(dx, dy, 0).normalize()
+Apply upper arm chain first, then forearm (so forearm inherits the updated upper arm world matrix).
+useMediaPipePose hook
+
+Accepts videoRef and onResults callback.
+Dynamically imports @mediapipe/pose, initializes with modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5.
+Calls getUserMedia({ video: true }), attaches stream to video element.
+Runs pose detection in a loop using requestAnimationFrame and pose.send({ image: videoElement }).
+Result: User stands in front of webcam, avatar mirrors their arm movements including elbow bends. Arms rest naturally hanging down (not T-pose) when the user's arms are down. Supply any Mixamo-rigged avatar.glb placed in the public/ folder.
