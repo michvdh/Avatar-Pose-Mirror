@@ -12,10 +12,12 @@ export interface PoseResults {
 }
 
 type OnResultsCallback = (results: PoseResults) => void;
+type OnStatusCallback = (status: string) => void;
 
 export function useMediaPipePose(
   videoRef: React.RefObject<HTMLVideoElement | null>,
-  onResults: OnResultsCallback
+  onResults: OnResultsCallback,
+  onStatus?: OnStatusCallback
 ) {
   const onResultsRef = useRef(onResults);
   onResultsRef.current = onResults;
@@ -52,7 +54,11 @@ export function useMediaPipePose(
 
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      } catch {
+      } catch (err) {
+        const isDenied =
+          err instanceof DOMException &&
+          (err.name === "NotAllowedError" || err.name === "PermissionDeniedError");
+        onStatus?.(isDenied ? "Camera access denied" : "Camera unavailable");
         return;
       }
 

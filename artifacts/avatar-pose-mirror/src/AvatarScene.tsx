@@ -20,14 +20,18 @@ export default function AvatarScene() {
   const poseResultsRef = useRef<PoseResults | null>(null);
   const boneChainsRef = useRef<BoneChain[]>([]);
 
-  useMediaPipePose(videoRef, (results) => {
-    poseResultsRef.current = results;
-    if (results.poseLandmarks && results.poseLandmarks.length > 0) {
-      setStatus("Pose detected");
-    } else {
-      setStatus("No pose detected");
-    }
-  });
+  useMediaPipePose(
+    videoRef,
+    (results) => {
+      poseResultsRef.current = results;
+      if (results.poseLandmarks && results.poseLandmarks.length > 0) {
+        setStatus("Pose detected");
+      } else {
+        setStatus("No pose detected");
+      }
+    },
+    (statusMsg) => setStatus(statusMsg)
+  );
 
   useEffect(() => {
     const mountEl = mountRef.current;
