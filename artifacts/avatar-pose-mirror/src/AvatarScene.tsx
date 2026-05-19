@@ -15,6 +15,7 @@ import {
   computeAimTarget,
   slerpBone,
 } from "./boneUtils";
+import SkeletonOverlay from "./SkeletonOverlay";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -423,6 +424,7 @@ export default function AvatarScene() {
   const mountRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState("Initializing…");
+  const [showSkeleton, setShowSkeleton] = useState(true);
 
   const holisticDataRef = useRef<HolisticResults | null>(null);
   const boneStoreRef = useRef<BoneStore | null>(null);
@@ -590,6 +592,24 @@ export default function AvatarScene() {
           border: "2px solid rgba(0,255,136,0.4)", zIndex: 10,
         }}
       />
+
+      <SkeletonOverlay resultsRef={holisticDataRef} visible={showSkeleton} />
+
+      <button
+        onClick={() => setShowSkeleton((v) => !v)}
+        style={{
+          position: "fixed", bottom: 12, right: 220,
+          fontFamily: "monospace", fontSize: 12,
+          color: showSkeleton ? "#00ff88" : "#888",
+          background: "rgba(0,0,0,0.6)",
+          border: `1px solid ${showSkeleton ? "rgba(0,255,136,0.5)" : "rgba(128,128,128,0.4)"}`,
+          borderRadius: 4, padding: "4px 10px",
+          cursor: "pointer", zIndex: 12,
+          transition: "color 0.15s, border-color 0.15s",
+        }}
+      >
+        {showSkeleton ? "skeleton on" : "skeleton off"}
+      </button>
     </div>
   );
 }
