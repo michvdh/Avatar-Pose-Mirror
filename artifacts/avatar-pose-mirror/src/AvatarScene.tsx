@@ -420,17 +420,28 @@ function computeTargets(
       );
     }
 
-    // ── Head yaw from ear Z-difference ─────────────────────────────────
+    // ── Head yaw + pitch ───────────────────────────────────────────────
+    // Yaw from ear Z-difference; pitch mirrors the neck's forwardTilt at
+    // a reduced scale (head sits on top of neck, so effects compound).
     const earL = wl[7], earR = wl[8];
-    if (store.head && isVis(earL) && isVis(earR)) {
+    if (store.head && isVis(earL) && isVis(earR) && isVis(nose) && isVis(ls) && isVis(rs)) {
       const earDZ = earL.z - earR.z;
       const earDX = Math.abs(earR.x - earL.x);
       const headYaw = Math.atan2(earDZ, Math.max(0.01, earDX)) * -0.6;
+
+      const shMidY = (ls.y + rs.y) / 2;
+      const shMidZ = (ls.z + rs.z) / 2;
+      const neckHeight = Math.max(0.01, ySign * (nose.y - shMidY));
+      // Same inversion as neck (-0.4) but at 60% magnitude; neck already does the bulk.
+      const headPitch = Math.atan2(-(nose.z - shMidZ), neckHeight) * -0.25;
+
       const rest = restData.get(store.head)!;
       targets.set(
         store.head,
         rest.localQuat.clone().multiply(
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), headYaw)
+          new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(headPitch, headYaw, 0, "XYZ")
+          )
         )
       );
     }
