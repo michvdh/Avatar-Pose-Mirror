@@ -410,41 +410,28 @@ function computeTargets(
       );
     }
 
-    // ── Legs ────────────────────────────────────────────────────────────
-    // Mirror: user RIGHT leg → avatar LEFT leg; user LEFT leg → avatar RIGHT leg
-    // MP pose landmarks:
-    //   left hip=23, right hip=24, left knee=25, right knee=26
-    //   left ankle=27, right ankle=28
-    //   left heel=29, right heel=30, left foot index=31, right foot index=32
-    if (wl.length >= 29) {
-      const lHip = wl[23], rHip = wl[24];
-      const lKnee = wl[25], rKnee = wl[26];
-      const lAnkle = wl[27], rAnkle = wl[28];
-
-      // Avatar LEFT thigh ← user RIGHT thigh (right hip→right knee)
-      if (isVis(rHip) && isVis(rKnee))
-        set(store.lThigh, restData.get(store.lThigh!), dirFn(rKnee, rHip));
-      // Avatar RIGHT thigh ← user LEFT thigh (left hip→left knee)
-      if (isVis(lHip) && isVis(lKnee))
-        set(store.rThigh, restData.get(store.rThigh!), dirFn(lKnee, lHip));
-
-      // Avatar LEFT calf ← user RIGHT calf (right knee→right ankle)
-      if (isVis(rKnee) && isVis(rAnkle))
-        set(store.lCalf, restData.get(store.lCalf!), dirFn(rAnkle, rKnee));
-      // Avatar RIGHT calf ← user LEFT calf (left knee→left ankle)
-      if (isVis(lKnee) && isVis(lAnkle))
-        set(store.rCalf, restData.get(store.rCalf!), dirFn(lAnkle, lKnee));
-
-      // Avatar LEFT foot ← user RIGHT foot (right ankle→right foot index)
-      if (wl.length >= 33) {
-        const lFootIdx = wl[31], rFootIdx = wl[32];
-        if (isVis(rAnkle) && isVis(rFootIdx))
-          set(store.lFoot, restData.get(store.lFoot!), dirFn(rFootIdx, rAnkle));
-        // Avatar RIGHT foot ← user LEFT foot (left ankle→left foot index)
-        if (isVis(lAnkle) && isVis(lFootIdx))
-          set(store.rFoot, restData.get(store.rFoot!), dirFn(lFootIdx, lAnkle));
-      }
-    }
+    // ── Legs — disabled, focusing on upper body tracking for now ────────
+    // Re-enable by uncommenting this block when ready to add leg tracking.
+    // if (wl.length >= 29) {
+    //   const lHip = wl[23], rHip = wl[24];
+    //   const lKnee = wl[25], rKnee = wl[26];
+    //   const lAnkle = wl[27], rAnkle = wl[28];
+    //   if (isVis(rHip) && isVis(rKnee))
+    //     set(store.lThigh, restData.get(store.lThigh!), dirFn(rKnee, rHip));
+    //   if (isVis(lHip) && isVis(lKnee))
+    //     set(store.rThigh, restData.get(store.rThigh!), dirFn(lKnee, lHip));
+    //   if (isVis(rKnee) && isVis(rAnkle))
+    //     set(store.lCalf, restData.get(store.lCalf!), dirFn(rAnkle, rKnee));
+    //   if (isVis(lKnee) && isVis(lAnkle))
+    //     set(store.rCalf, restData.get(store.rCalf!), dirFn(lAnkle, lKnee));
+    //   if (wl.length >= 33) {
+    //     const lFootIdx = wl[31], rFootIdx = wl[32];
+    //     if (isVis(rAnkle) && isVis(rFootIdx))
+    //       set(store.lFoot, restData.get(store.lFoot!), dirFn(rFootIdx, rAnkle));
+    //     if (isVis(lAnkle) && isVis(lFootIdx))
+    //       set(store.rFoot, restData.get(store.rFoot!), dirFn(lFootIdx, lAnkle));
+    //   }
+    // }
   }
 
   // ── Wrist orientation from hand landmarks ─────────────────────────────
