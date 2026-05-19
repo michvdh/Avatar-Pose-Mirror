@@ -610,13 +610,18 @@ export default function AvatarScene() {
         model.scale.setScalar(0.1);
         scene.add(model);
 
-        // Frame camera on upper body
+        // Frame camera to fit the entire model — full body visible
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());
-        const torsoY = center.y + size.y * 0.15;
-        camera.position.set(center.x, torsoY, size.y * 0.32 + 0.3);
-        camera.lookAt(center.x, torsoY, center.z);
+        const fovRad = THREE.MathUtils.degToRad(camera.fov);
+        // Distance needed so the model's full height fits in the viewport
+        const zForHeight = (size.y / 2) / Math.tan(fovRad / 2);
+        // Distance needed so the model's width also fits (account for aspect ratio)
+        const zForWidth  = (size.x / 2) / (Math.tan(fovRad / 2) * camera.aspect);
+        const zDist = Math.max(zForHeight, zForWidth) * 1.2; // 20% padding
+        camera.position.set(center.x, center.y, center.z + zDist);
+        camera.lookAt(center.x, center.y, center.z);
 
         // Discover bones, capture rest pose
         const store = buildBoneStore(model);
