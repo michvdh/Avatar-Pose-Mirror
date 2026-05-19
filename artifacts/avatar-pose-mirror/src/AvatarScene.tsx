@@ -28,6 +28,9 @@ interface BoneStore {
   spine1: THREE.Bone | null;
   neck: THREE.Bone | null;
   head: THREE.Bone | null;
+  // Clavicles / shoulders — elevate with arm raise
+  lShoulder: THREE.Bone | null;
+  rShoulder: THREE.Bone | null;
   // Avatar LEFT (visual RIGHT) – driven by user's RIGHT side
   lUpperArm: THREE.Bone | null;
   lForeArm: THREE.Bone | null;
@@ -61,11 +64,13 @@ function buildBoneStore(root: THREE.Object3D): BoneStore {
   const store: BoneStore = {
     root,
     hips: fb([["hips"], ["hip"], ["pelvis"]]),
-    // Spine: use specific joint names to avoid ambiguity
     spine: fb([["spine01"], ["spine1"], ["spine"], ["torso"]]),
     spine1: fb([["spine02"], ["spine2"], ["chest"], ["upperchest"]]),
     neck: fb([["neck"]]),
     head: fb([["head"]]),
+    // Clavicles — CC_Base uses "clavicle"
+    lShoulder: fb([["lclavicle"], ["lshoulder"], ["leftclavicle"], ["leftshoulder"]]),
+    rShoulder: fb([["rclavicle"], ["rshoulder"], ["rightclavicle"], ["rightshoulder"]]),
     // Avatar LEFT arm — "lupperarm" only matches l_upperarm not r_upperarm
     lUpperArm: fb([["lupperarm"], ["leftarm"], ["leftupperarm"]]),
     lForeArm:  fb([["lforearm"],  ["leftforearm"]]),
@@ -94,8 +99,13 @@ function buildBoneStore(root: THREE.Object3D): BoneStore {
   const report = (label: string, b: THREE.Bone | null) =>
     console.log(`[bones] ${label}: ${b?.name ?? "NOT FOUND"}`);
   report("hips", store.hips); report("spine", store.spine);
+  report("neck", store.neck); report("head", store.head);
+  report("lShoulder", store.lShoulder); report("rShoulder", store.rShoulder);
   report("lUpperArm", store.lUpperArm); report("lForeArm", store.lForeArm); report("lHand", store.lHand);
   report("rUpperArm", store.rUpperArm); report("rForeArm", store.rForeArm); report("rHand", store.rHand);
+  const lIdx = store.lFingers[1]; const rIdx = store.rFingers[1];
+  console.log(`[bones] lIndex: ${lIdx[0]?.name ?? "?"} / ${lIdx[1]?.name ?? "?"} / ${lIdx[2]?.name ?? "?"}`);
+  console.log(`[bones] rIndex: ${rIdx[0]?.name ?? "?"} / ${rIdx[1]?.name ?? "?"} / ${rIdx[2]?.name ?? "?"}`);
 
   return store;
 }
@@ -111,6 +121,7 @@ function captureRestData(store: BoneStore): Map<THREE.Bone, BoneRestData> {
 
   euler(store.hips); euler(store.spine); euler(store.spine1);
   euler(store.neck); euler(store.head);
+  euler(store.lShoulder); euler(store.rShoulder);
 
   chain(store.lUpperArm, store.lForeArm);
   chain(store.lForeArm, store.lHand);
@@ -121,6 +132,18 @@ function captureRestData(store: BoneStore): Map<THREE.Bone, BoneRestData> {
     for (const fg of hand) {
       chain(fg[0], fg[1]);
       chain(fg[1], fg[2]);
+      // Distal bone (fg[2]): try real tip child, else extrapolate from bone's local +X
+      const distal = fg[2];
+      if (distal && !map.has(distal)) {
+        const tipChild = distal.children.find((c) => c instanceof THREE.Bone) as THREE.Bone | undefined;
+        if (tipChild) {
+          map.set(distal, captureArmRestData(distal, tipChild));
+        } else {
+          const wq = distal.getWorldQuaternion(new THREE.Quaternion());
+          const worldDir = new THREE.Vector3(1, 0, 0).applyQuaternion(wq).normalize();
+          map.set(distal, { localQuat: distal.quaternion.clone(), worldDir });
+        }
+      }
     }
   }
   return map;
@@ -175,61 +198,140 @@ function computeTargets(
   const lhLms = data.leftHandLandmarks;  // user LEFT  → avatar rFingers
 
   if (wl && wl.length >= 25) {
+    const ls = wl[11], rs = wl[12]; // left/right shoulders in MP world
+    const lh = wl[23], rh = wl[24]; // left/right hips
+
     // ── Hips yaw (torso twist from shoulder Z-spread) ──────────────────
-    if (store.hips) {
-      const ls = wl[11], rs = wl[12];
-      if (isVis(ls) && isVis(rs)) {
-        const dx = rs.x - ls.x; // negative when facing camera (right at neg-X, left at pos-X)
-        const dz = rs.z - ls.z;
-        const yaw = Math.atan2(dz, -dx) * 0.65;
-        const rest = restData.get(store.hips)!;
-        targets.set(
-          store.hips,
-          rest.localQuat.clone().multiply(
-            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw)
-          )
-        );
-      }
+    if (store.hips && isVis(ls) && isVis(rs)) {
+      const dx = rs.x - ls.x;
+      const dz = rs.z - ls.z;
+      const yaw = Math.atan2(dz, -dx) * 0.65;
+      const rest = restData.get(store.hips)!;
+      targets.set(
+        store.hips,
+        rest.localQuat.clone().multiply(
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw)
+        )
+      );
     }
 
-    // ── Spine lateral lean ─────────────────────────────────────────────
-    if (store.spine) {
-      const ls = wl[11], rs = wl[12], lh = wl[23], rh = wl[24];
-      if (isVis(ls) && isVis(rs) && isVis(lh) && isVis(rh)) {
-        const smx = (ls.x + rs.x) / 2, smy = (ls.y + rs.y) / 2;
-        const hmx = (lh.x + rh.x) / 2, hmy = (lh.y + rh.y) / 2;
-        const lean = Math.atan2(smx - hmx, Math.max(0.01, smy - hmy)) * 0.45;
-        const rest = restData.get(store.spine)!;
-        targets.set(
-          store.spine,
-          rest.localQuat.clone().multiply(
-            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -lean)
-          )
-        );
-      }
+    // ── Spine forward/back lean from shoulder Z vs hip Z ──────────────
+    if (store.spine && isVis(ls) && isVis(rs) && isVis(lh) && isVis(rh)) {
+      const shMidZ = (ls.z + rs.z) / 2;
+      const hipMidZ = (lh.z + rh.z) / 2;
+      const shMidY = (ls.y + rs.y) / 2;
+      const hipMidY = (lh.y + rh.y) / 2;
+      const forwardLean = Math.atan2(shMidZ - hipMidZ, Math.max(0.01, shMidY - hipMidY)) * 0.5;
+      const rest = restData.get(store.spine)!;
+      targets.set(
+        store.spine,
+        rest.localQuat.clone().multiply(
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), forwardLean)
+        )
+      );
     }
 
-    // ── Avatar LEFT arm ← user's RIGHT arm (MP 12 → 14 → 16) ──────────
-    if (isVis(wl[12]) && isVis(wl[14]))
-      set(store.lUpperArm, restData.get(store.lUpperArm!), worldDir(wl[14], wl[12]));
+    // ── Spine1 lateral lean from shoulder vs hip X midpoint offset ─────
+    if (store.spine1 && isVis(ls) && isVis(rs) && isVis(lh) && isVis(rh)) {
+      const shMidX = (ls.x + rs.x) / 2;
+      const hipMidX = (lh.x + rh.x) / 2;
+      const shMidY = (ls.y + rs.y) / 2;
+      const hipMidY = (lh.y + rh.y) / 2;
+      const lateralLean = Math.atan2(shMidX - hipMidX, Math.max(0.01, shMidY - hipMidY)) * 0.4;
+      const rest = restData.get(store.spine1)!;
+      targets.set(
+        store.spine1,
+        rest.localQuat.clone().multiply(
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -lateralLean)
+        )
+      );
+    }
+
+    // ── Clavicle elevation from arm raise ──────────────────────────────
+    // Avatar LEFT clavicle driven by user's RIGHT shoulder/elbow (mirrored)
+    if (store.lShoulder && isVis(rs) && isVis(wl[14])) {
+      const elevation = Math.max(-0.25, Math.min(0.45, (wl[14].y - rs.y) * -1.2));
+      const rest = restData.get(store.lShoulder)!;
+      targets.set(
+        store.lShoulder,
+        rest.localQuat.clone().multiply(
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), elevation)
+        )
+      );
+    }
+    // Avatar RIGHT clavicle driven by user's LEFT shoulder/elbow
+    if (store.rShoulder && isVis(ls) && isVis(wl[13])) {
+      const elevation = Math.max(-0.25, Math.min(0.45, (wl[13].y - ls.y) * -1.2));
+      const rest = restData.get(store.rShoulder)!;
+      targets.set(
+        store.rShoulder,
+        rest.localQuat.clone().multiply(
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -elevation)
+        )
+      );
+    }
+
+    // ── Arms ───────────────────────────────────────────────────────────
+    // Avatar LEFT arm ← user's RIGHT arm (MP: shoulder=12, elbow=14, wrist=16)
+    if (isVis(rs) && isVis(wl[14]))
+      set(store.lUpperArm, restData.get(store.lUpperArm!), worldDir(wl[14], rs));
     if (isVis(wl[14]) && isVis(wl[16]))
       set(store.lForeArm, restData.get(store.lForeArm!), worldDir(wl[16], wl[14]));
 
-    // ── Avatar RIGHT arm ← user's LEFT arm (MP 11 → 13 → 15) ──────────
-    if (isVis(wl[11]) && isVis(wl[13]))
-      set(store.rUpperArm, restData.get(store.rUpperArm!), worldDir(wl[13], wl[11]));
+    // Avatar RIGHT arm ← user's LEFT arm (MP: shoulder=11, elbow=13, wrist=15)
+    if (isVis(ls) && isVis(wl[13]))
+      set(store.rUpperArm, restData.get(store.rUpperArm!), worldDir(wl[13], ls));
     if (isVis(wl[13]) && isVis(wl[15]))
       set(store.rForeArm, restData.get(store.rForeArm!), worldDir(wl[15], wl[13]));
+
+    // ── Neck tilt from nose/shoulder midpoint ──────────────────────────
+    const nose = wl[0];
+    if (store.neck && isVis(nose) && isVis(ls) && isVis(rs)) {
+      const shMidX = (ls.x + rs.x) / 2;
+      const shMidY = (ls.y + rs.y) / 2;
+      const shMidZ = (ls.z + rs.z) / 2;
+      const neckHeight = Math.max(0.01, nose.y - shMidY);
+      // Lateral tilt: negate X for mirror
+      const lateralTilt = Math.atan2(-(nose.x - shMidX), neckHeight) * 0.5;
+      // Forward/back tilt from Z depth
+      const forwardTilt = Math.atan2(nose.z - shMidZ, neckHeight) * 0.4;
+      const rest = restData.get(store.neck)!;
+      targets.set(
+        store.neck,
+        rest.localQuat.clone().multiply(
+          new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(forwardTilt, 0, lateralTilt, "XYZ")
+          )
+        )
+      );
+    }
+
+    // ── Head yaw from ear Z-difference ─────────────────────────────────
+    const earL = wl[7], earR = wl[8];
+    if (store.head && isVis(earL) && isVis(earR)) {
+      // User turns head right → earR moves closer (earR.z decreases relative to earL.z)
+      // Negate for mirror so avatar mirrors the yaw
+      const earDZ = earL.z - earR.z;
+      const earDX = Math.abs(earR.x - earL.x);
+      const headYaw = Math.atan2(earDZ, Math.max(0.01, earDX)) * -0.6;
+      const rest = restData.get(store.head)!;
+      targets.set(
+        store.head,
+        rest.localQuat.clone().multiply(
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), headYaw)
+        )
+      );
+    }
   }
 
-  // ── Fingers ───────────────────────────────────────────────────────────
+  // ── Fingers — all 3 joints per digit ─────────────────────────────────
   const applyFingers = (fingers: HandFingers, lms: Landmark2D[]) => {
     for (let f = 0; f < 5; f++) {
       const bones = fingers[f];
       const pairs = FINGER_PAIRS[f];
-      for (let j = 0; j < 2; j++) {
-        const bone = bones[j], child = bones[j + 1];
-        if (!bone || !child) continue;
+      for (let j = 0; j < 3; j++) {
+        const bone = bones[j];
+        if (!bone) continue;
         const rest = restData.get(bone);
         if (!rest) continue;
         const [pi, ci] = pairs[j];
