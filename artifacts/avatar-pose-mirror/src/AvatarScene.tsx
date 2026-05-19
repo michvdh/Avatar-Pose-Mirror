@@ -125,8 +125,11 @@ function captureRestData(store: BoneStore): Map<THREE.Bone, BoneRestData> {
 
   chain(store.lUpperArm, store.lForeArm);
   chain(store.lForeArm, store.lHand);
+  // Hand bone: aim toward middle-finger proximal (or index if no middle)
+  chain(store.lHand, store.lFingers[2][0] ?? store.lFingers[1][0]);
   chain(store.rUpperArm, store.rForeArm);
   chain(store.rForeArm, store.rHand);
+  chain(store.rHand, store.rFingers[2][0] ?? store.rFingers[1][0]);
 
   for (const hand of [store.lFingers, store.rFingers]) {
     for (const fg of hand) {
@@ -321,6 +324,25 @@ function computeTargets(
           new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), headYaw)
         )
       );
+    }
+  }
+
+  // ── Wrist orientation from hand landmarks ─────────────────────────────
+  // Direction wrist(0) → middle MCP(9) gives hand forward vector
+  if (rhLms && store.lHand) {
+    const rest = restData.get(store.lHand);
+    if (rest && rhLms[0] && rhLms[9]) {
+      const dir = handDir(rhLms[9], rhLms[0]);
+      if (dir.lengthSq() > 1e-10)
+        targets.set(store.lHand, computeAimTarget(store.lHand, rest, dir));
+    }
+  }
+  if (lhLms && store.rHand) {
+    const rest = restData.get(store.rHand);
+    if (rest && lhLms[0] && lhLms[9]) {
+      const dir = handDir(lhLms[9], lhLms[0]);
+      if (dir.lengthSq() > 1e-10)
+        targets.set(store.rHand, computeAimTarget(store.rHand, rest, dir));
     }
   }
 
