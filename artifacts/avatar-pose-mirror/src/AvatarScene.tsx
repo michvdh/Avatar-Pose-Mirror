@@ -166,11 +166,13 @@ function worldDir(child: Landmark3D, parent: Landmark3D): THREE.Vector3 {
 }
 
 // 2D hand landmarks: negate both X (mirror) and Y (image-down → world-up)
+// Include Z (relative wrist depth) so directions stay 3D-stable when fingers
+// point toward / away from the camera.
 function handDir(child: Landmark2D, parent: Landmark2D): THREE.Vector3 {
   return new THREE.Vector3(
     -(child.x - parent.x),
     -(child.y - parent.y),
-    0
+    (child.z ?? 0) - (parent.z ?? 0)
   ).normalize();
 }
 
@@ -347,11 +349,19 @@ function computeTargets(
   }
 
   // ── Fingers — all 3 joints per digit ─────────────────────────────────
+  // Max rotation clamped to 75° for proximal/intermediate to prevent wild
+  // overextension from noisy landmarks.
+  // Distal (j=2) is driven proportionally from the intermediate (j=1) at 70%
+  // to eliminate the virtual rest-direction instability entirely.
+  const FINGER_MAX_ANGLE = 75;
+  const DISTAL_SCALE = 0.7;
+
   const applyFingers = (fingers: HandFingers, lms: Landmark2D[]) => {
     for (let f = 0; f < 5; f++) {
       const bones = fingers[f];
       const pairs = FINGER_PAIRS[f];
-      for (let j = 0; j < 3; j++) {
+
+      for (let j = 0; j < 2; j++) {
         const bone = bones[j];
         if (!bone) continue;
         const rest = restData.get(bone);
@@ -360,7 +370,25 @@ function computeTargets(
         if (!lms[pi] || !lms[ci]) continue;
         const dir = handDir(lms[ci], lms[pi]);
         if (dir.lengthSq() < 1e-10) continue;
-        targets.set(bone, computeAimTarget(bone, rest, dir));
+        targets.set(bone, computeAimTarget(bone, rest, dir, FINGER_MAX_ANGLE));
+      }
+
+      // Distal joint: proportional from intermediate rather than independent aim
+      const distal = bones[2];
+      const intermediate = bones[1];
+      if (distal && intermediate) {
+        const distalRest = restData.get(distal);
+        const intermediateRest = restData.get(intermediate);
+        const intermediateTarget = targets.get(intermediate);
+        if (distalRest && intermediateRest && intermediateTarget) {
+          // Delta rotation applied to the intermediate bone from its rest pose
+          const delta = intermediateTarget
+            .clone()
+            .multiply(intermediateRest.localQuat.clone().invert());
+          // Scale the rotation to DISTAL_SCALE (slerp from identity)
+          const scaledDelta = new THREE.Quaternion().slerp(delta, DISTAL_SCALE);
+          targets.set(distal, scaledDelta.multiply(distalRest.localQuat.clone()));
+        }
       }
     }
   };
@@ -374,7 +402,7 @@ function computeTargets(
 // ─── Component ─────────────────────────────────────────────────────────────
 
 const ALPHA_BODY = 0.14;
-const ALPHA_FINGER = 0.22;
+const ALPHA_FINGER = 0.09;
 
 export default function AvatarScene() {
   const mountRef = useRef<HTMLDivElement>(null);

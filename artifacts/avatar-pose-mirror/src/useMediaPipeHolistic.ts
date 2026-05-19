@@ -92,7 +92,7 @@ export function useMediaPipeHolistic(
         enableSegmentation: false,
         refineFaceLandmarks: false,
         minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5,
+        minTrackingConfidence: 0.7,
       });
 
       holistic.onResults((results: HolisticResults) => {

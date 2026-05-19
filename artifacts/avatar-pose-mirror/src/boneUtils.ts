@@ -84,7 +84,8 @@ export function captureEulerRestData(bone: THREE.Bone): BoneRestData {
 export function computeAimTarget(
   bone: THREE.Bone,
   restData: BoneRestData,
-  targetWorldDir: THREE.Vector3
+  targetWorldDir: THREE.Vector3,
+  maxAngleDeg?: number
 ): THREE.Quaternion {
   const tNorm = targetWorldDir.clone().normalize();
   if (tNorm.lengthSq() < 1e-12 || restData.worldDir.lengthSq() < 1e-12) {
@@ -93,6 +94,16 @@ export function computeAimTarget(
 
   // delta rotates the rest-world-direction onto the target-world-direction
   const delta = new THREE.Quaternion().setFromUnitVectors(restData.worldDir, tNorm);
+
+  // Clamp rotation magnitude for noisy inputs (e.g. fingers)
+  if (maxAngleDeg !== undefined) {
+    const maxAngleRad = THREE.MathUtils.degToRad(maxAngleDeg);
+    const angle = 2 * Math.acos(Math.min(1, Math.abs(delta.w)));
+    if (angle > maxAngleRad && angle > 1e-6) {
+      const clamped = new THREE.Quaternion().slerp(delta, maxAngleRad / angle);
+      delta.copy(clamped);
+    }
+  }
 
   // Apply delta in world space (from rest world orientation)
   // currentRestWorldQuat = parent_current_world_quat * restLocalQuat
