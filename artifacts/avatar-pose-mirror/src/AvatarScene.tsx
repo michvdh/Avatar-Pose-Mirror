@@ -242,14 +242,15 @@ function poseDir(child: Landmark3D, parent: Landmark3D): THREE.Vector3 {
   ).normalize();
 }
 
-// 2D hand landmarks: negate both X (mirror) and Y (image-down → world-up)
-// Include Z (relative wrist depth) so directions stay 3D-stable when fingers
-// point toward / away from the camera.
+// 2D hand landmarks: negate X (mirror), Y (image-down → world-up), AND Z.
+// Hand landmark Z uses the same sign convention as pose landmarks:
+//   negative = closer to camera, positive = further from camera.
+// Negating aligns with poseDir so wrist orientation is correct in all axes.
 function handDir(child: Landmark2D, parent: Landmark2D): THREE.Vector3 {
   return new THREE.Vector3(
     -(child.x - parent.x),
     -(child.y - parent.y),
-    (child.z ?? 0) - (parent.z ?? 0)
+    -((child.z ?? 0) - (parent.z ?? 0))
   ).normalize();
 }
 
@@ -489,8 +490,12 @@ function computeTargets(
   // Distal (j=2) driven proportionally from intermediate at 70%.
   const FINGER_MAX_RAD = THREE.MathUtils.degToRad(75);
   const DISTAL_SCALE = 0.7;
-  // local -Z = palm-curl (flexion) axis for CC_Base finger bones
-  const CURL_AXIS = new THREE.Vector3(0, 0, -1);
+  // local +X = palm-curl (flexion) axis for CC_Base finger bones.
+  // CC_Base convention: local Y runs along the finger, local Z points toward the
+  // palm.  Rotating local +Y toward local +Z requires a rotation around their
+  // cross product: +Y × +Z = +X.  Positive bend around +X therefore curls the
+  // fingertip toward the palm (true flexion).
+  const CURL_AXIS = new THREE.Vector3(1, 0, 0);
 
   const applyFingers = (fingers: HandFingers, lms: Landmark2D[]) => {
     for (let f = 0; f < 5; f++) {
