@@ -42,6 +42,13 @@ interface BoneStore {
   rForeArm: THREE.Bone | null;
   rHand: THREE.Bone | null;
   rFingers: HandFingers;
+  // Legs — Avatar LEFT driven by user's RIGHT leg; Avatar RIGHT by user's LEFT leg
+  lThigh: THREE.Bone | null;
+  rThigh: THREE.Bone | null;
+  lCalf: THREE.Bone | null;
+  rCalf: THREE.Bone | null;
+  lFoot: THREE.Bone | null;
+  rFoot: THREE.Bone | null;
 }
 
 // ─── Bone discovery ────────────────────────────────────────────────────────
@@ -94,6 +101,13 @@ function buildBoneStore(root: THREE.Object3D): BoneStore {
       finger(root, "right", "ring"),
       finger(root, "right", "pinky"),
     ],
+    // Legs — CC_Base_L/R_Thigh, CC_Base_L/R_Calf, CC_Base_L/R_Foot
+    lThigh: fb([["lthigh"], ["leftthigh"], ["lupleg"], ["leftupleg"]]),
+    rThigh: fb([["rthigh"], ["rightthigh"], ["rupleg"], ["rightupleg"]]),
+    lCalf:  fb([["lcalf"],  ["leftcalf"],  ["lleg"],  ["leftleg"]]),
+    rCalf:  fb([["rcalf"],  ["rightcalf"], ["rleg"],  ["rightleg"]]),
+    lFoot:  fb([["lfoot"],  ["leftfoot"]]),
+    rFoot:  fb([["rfoot"],  ["rightfoot"]]),
   };
 
   // Debug log
@@ -107,6 +121,9 @@ function buildBoneStore(root: THREE.Object3D): BoneStore {
   const lIdx = store.lFingers[1]; const rIdx = store.rFingers[1];
   console.log(`[bones] lIndex: ${lIdx[0]?.name ?? "?"} / ${lIdx[1]?.name ?? "?"} / ${lIdx[2]?.name ?? "?"}`);
   console.log(`[bones] rIndex: ${rIdx[0]?.name ?? "?"} / ${rIdx[1]?.name ?? "?"} / ${rIdx[2]?.name ?? "?"}`);
+  report("lThigh", store.lThigh); report("rThigh", store.rThigh);
+  report("lCalf", store.lCalf);   report("rCalf", store.rCalf);
+  report("lFoot", store.lFoot);   report("rFoot", store.rFoot);
 
   return store;
 }
@@ -131,6 +148,27 @@ function captureRestData(store: BoneStore): Map<THREE.Bone, BoneRestData> {
   chain(store.rUpperArm, store.rForeArm);
   chain(store.rForeArm, store.rHand);
   chain(store.rHand, store.rFingers[2][0] ?? store.rFingers[1][0]);
+
+  // Legs — thigh aims at calf (knee), calf aims at foot (ankle)
+  chain(store.lThigh, store.lCalf);
+  chain(store.rThigh, store.rCalf);
+  chain(store.lCalf, store.lFoot);
+  chain(store.rCalf, store.rFoot);
+
+  // Foot bones: aim toward first child toe bone if present, else use local +X world direction
+  const captureFoot = (b: THREE.Bone | null) => {
+    if (!b) return;
+    const toeBone = b.children.find((c) => c instanceof THREE.Bone) as THREE.Bone | undefined;
+    if (toeBone) {
+      map.set(b, captureArmRestData(b, toeBone));
+    } else {
+      const wq = b.getWorldQuaternion(new THREE.Quaternion());
+      const worldDir = new THREE.Vector3(1, 0, 0).applyQuaternion(wq).normalize();
+      map.set(b, { localQuat: b.quaternion.clone(), worldDir });
+    }
+  };
+  captureFoot(store.lFoot);
+  captureFoot(store.rFoot);
 
   for (const hand of [store.lFingers, store.rFingers]) {
     for (const fg of hand) {
@@ -370,6 +408,42 @@ function computeTargets(
           new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), headYaw)
         )
       );
+    }
+
+    // ── Legs ────────────────────────────────────────────────────────────
+    // Mirror: user RIGHT leg → avatar LEFT leg; user LEFT leg → avatar RIGHT leg
+    // MP pose landmarks:
+    //   left hip=23, right hip=24, left knee=25, right knee=26
+    //   left ankle=27, right ankle=28
+    //   left heel=29, right heel=30, left foot index=31, right foot index=32
+    if (wl.length >= 29) {
+      const lHip = wl[23], rHip = wl[24];
+      const lKnee = wl[25], rKnee = wl[26];
+      const lAnkle = wl[27], rAnkle = wl[28];
+
+      // Avatar LEFT thigh ← user RIGHT thigh (right hip→right knee)
+      if (isVis(rHip) && isVis(rKnee))
+        set(store.lThigh, restData.get(store.lThigh!), dirFn(rKnee, rHip));
+      // Avatar RIGHT thigh ← user LEFT thigh (left hip→left knee)
+      if (isVis(lHip) && isVis(lKnee))
+        set(store.rThigh, restData.get(store.rThigh!), dirFn(lKnee, lHip));
+
+      // Avatar LEFT calf ← user RIGHT calf (right knee→right ankle)
+      if (isVis(rKnee) && isVis(rAnkle))
+        set(store.lCalf, restData.get(store.lCalf!), dirFn(rAnkle, rKnee));
+      // Avatar RIGHT calf ← user LEFT calf (left knee→left ankle)
+      if (isVis(lKnee) && isVis(lAnkle))
+        set(store.rCalf, restData.get(store.rCalf!), dirFn(lAnkle, lKnee));
+
+      // Avatar LEFT foot ← user RIGHT foot (right ankle→right foot index)
+      if (wl.length >= 33) {
+        const lFootIdx = wl[31], rFootIdx = wl[32];
+        if (isVis(rAnkle) && isVis(rFootIdx))
+          set(store.lFoot, restData.get(store.lFoot!), dirFn(rFootIdx, rAnkle));
+        // Avatar RIGHT foot ← user LEFT foot (left ankle→left foot index)
+        if (isVis(lAnkle) && isVis(lFootIdx))
+          set(store.rFoot, restData.get(store.rFoot!), dirFn(lFootIdx, lAnkle));
+      }
     }
   }
 
