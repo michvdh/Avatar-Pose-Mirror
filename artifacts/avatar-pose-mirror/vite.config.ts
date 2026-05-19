@@ -46,6 +46,9 @@ export default defineConfig({
         ]
       : []),
   ],
+  optimizeDeps: {
+    exclude: ["@mediapipe/holistic", "@mediapipe/pose"],
+  },
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "src"),
