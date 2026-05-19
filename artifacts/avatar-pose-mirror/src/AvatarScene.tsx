@@ -472,8 +472,8 @@ export default function AvatarScene() {
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());
-        const torsoY = center.y + size.y * 0.1;
-        camera.position.set(center.x, torsoY, size.y * 0.55 + 0.5);
+        const torsoY = center.y + size.y * 0.15;
+        camera.position.set(center.x, torsoY, size.y * 0.32 + 0.3);
         camera.lookAt(center.x, torsoY, center.z);
 
         // Discover bones, capture rest pose
