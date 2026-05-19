@@ -477,13 +477,20 @@ function computeTargets(
 
   // ── Fingers — curl-angle approach ────────────────────────────────────
   // For each proximal/intermediate joint: measure the 2D bend angle between the
-  // incoming and outgoing landmark segments at that joint. Apply as a local-X
+  // incoming and outgoing landmark segments at that joint. Apply as a local-Z
   // rotation on the rest quaternion. This keeps fingers at rest when the hand
-  // is open (angle ≈ 0) and only curls them inward, eliminating hyperextension.
+  // is open (angle ≈ 0) and only curls them inward toward the palm.
+  //
+  // CC_Base finger bones have local Y along the finger and local Z pointing
+  // toward the palm (palmar = +Z). Rotating around -Z by a positive angle
+  // therefore flexes the finger toward the palm (true curl), while the old +X
+  // axis was the lateral/splay axis and caused sideways drift instead.
+  //
   // Distal (j=2) driven proportionally from intermediate at 70%.
   const FINGER_MAX_RAD = THREE.MathUtils.degToRad(75);
   const DISTAL_SCALE = 0.7;
-  const X_AXIS = new THREE.Vector3(1, 0, 0);
+  // local -Z = palm-curl (flexion) axis for CC_Base finger bones
+  const CURL_AXIS = new THREE.Vector3(0, 0, -1);
 
   const applyFingers = (fingers: HandFingers, lms: Landmark2D[]) => {
     for (let f = 0; f < 5; f++) {
@@ -516,11 +523,11 @@ function computeTargets(
         const dot = Math.max(-1, Math.min(1, (inX * outX + inY * outY) / (inLen * outLen)));
         const bendAngle = Math.min(Math.acos(dot), FINGER_MAX_RAD);
 
-        // Apply bend around local X-axis (curl axis) offset from rest quaternion.
+        // Apply bend around local -Z axis (palm-curl axis) offset from rest quaternion.
         targets.set(
           bone,
           rest.localQuat.clone().multiply(
-            new THREE.Quaternion().setFromAxisAngle(X_AXIS, bendAngle)
+            new THREE.Quaternion().setFromAxisAngle(CURL_AXIS, bendAngle)
           )
         );
       }
