@@ -154,6 +154,30 @@ function captureRestData(store: BoneStore): Map<THREE.Bone, BoneRestData> {
 }
 
 // ─── Landmark helpers ──────────────────────────────────────────────────────
+//
+// MediaPipe coordinate conventions (critical for sign decisions):
+//
+//  poseLandmarks (image-space, used here):
+//    X  — normalized [0,1], increases LEFT→RIGHT in image
+//    Y  — normalized [0,1], increases TOP→BOTTOM in image  (Y is DOWN)
+//    Z  — depth in the same scale as X, origin at hip midpoint.
+//         NEGATIVE = closer to camera / in front of the body.
+//         POSITIVE = further from camera / behind the body.
+//
+//  Landmark indices follow the PERSON's left/right (not camera left/right).
+//  In an unmirrored feed, the person's LEFT shoulder (idx 11) appears on the
+//  RIGHT side of the image, so ls.x > rs.x when the user faces the camera.
+//
+//  poseWorldLandmarks (world-space, fallback):
+//    X  — increases LEFT→RIGHT (same as image)
+//    Y  — world-up (opposite of image Y)
+//    Z  — same depth convention as poseLandmarks
+//
+//  Consequence for Z-based lean/tilt formulas:
+//    • Leaning FORWARD → shoulders come CLOSER to camera → shMidZ DECREASES.
+//      Use -(shMidZ - hipMidZ) so forward lean yields a positive rotation.
+//    • Tilting chin FORWARD → nose comes CLOSER → nose.z DECREASES.
+//      Use -(nose.z - shMidZ) so chin-forward yields a positive rotation.
 
 const isVis = (lm: Landmark3D) => (lm.visibility ?? 1) >= 0.3;
 
@@ -244,7 +268,9 @@ function computeTargets(
       const shMidY = (ls.y + rs.y) / 2;
       const hipMidY = (lh.y + rh.y) / 2;
       // ySign: worldLandmarks → shMidY > hipMidY; poseLandmarks → shMidY < hipMidY
-      const forwardLean = Math.atan2(shMidZ - hipMidZ, Math.max(0.01, ySign * (shMidY - hipMidY))) * 0.5;
+      // Negate Z delta: in poseLandmarks, smaller Z = closer to camera.
+      // Leaning forward brings shoulders closer → shMidZ drops → negate so positive lean = forward.
+      const forwardLean = Math.atan2(-(shMidZ - hipMidZ), Math.max(0.01, ySign * (shMidY - hipMidY))) * 0.5;
       const rest = restData.get(store.spine)!;
       targets.set(
         store.spine,
@@ -317,7 +343,9 @@ function computeTargets(
       // ySign: worldLandmarks → nose.y > shMidY; poseLandmarks → nose.y < shMidY
       const neckHeight = Math.max(0.01, ySign * (nose.y - shMidY));
       const lateralTilt = Math.atan2(-(nose.x - shMidX), neckHeight) * 0.5;
-      const forwardTilt = Math.atan2(nose.z - shMidZ, neckHeight) * 0.4;
+      // Negate Z delta: smaller Z = closer to camera in poseLandmarks.
+      // Tilting chin forward brings nose closer → nose.z drops → negate so positive tilt = forward.
+      const forwardTilt = Math.atan2(-(nose.z - shMidZ), neckHeight) * 0.4;
       const rest = restData.get(store.neck)!;
       targets.set(
         store.neck,
