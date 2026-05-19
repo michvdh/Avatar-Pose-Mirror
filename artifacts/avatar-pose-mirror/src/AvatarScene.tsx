@@ -60,8 +60,8 @@ function finger(root: THREE.Object3D, side: string, name: string): FingerBones {
   const s = side[0]; // "l" or "r"
   const f = (n: number) =>
     findBone(root, [
-      [`${name}0${n}${s}`],         // AccuRig: thumb01l, index02r, middle03l
-      [`${s}${name}${n}`],          // CC_Base: lthumb1, rindex2
+      [`${s}${name}${n}`],          // CC_Base first: lthumb1, rindex2
+      [`${name}0${n}${s}`],         // AccuRig fallback: thumb01l, index02r
       [`${side}hand${name}${n}`],   // Mixamo: lefthandthumb1
       [`${name}${n}`, s, "hand"],   // broad fallback
     ]);
@@ -80,24 +80,22 @@ function buildBoneStore(root: THREE.Object3D): BoneStore {
     root,
     // AccuRig: pelvis | CC_Base: hips/hip
     hips:   fb([["pelvis"], ["hips"], ["hip"]]),
-    // AccuRig: spine_01→"spine01" | CC_Base: spine01/spine
+    // CC_Base: spine01 | AccuRig: spine_01→"spine01"
     spine:  fb([["spine01"], ["spine1"], ["spine"], ["torso"]]),
-    // AccuRig: spine_02→"spine02" | CC_Base: spine02/chest
+    // CC_Base: spine02 | AccuRig: spine_02→"spine02"
     spine1: fb([["spine02"], ["spine2"], ["chest"], ["upperchest"]]),
-    // AccuRig: neck_01→"neck01" | CC_Base: neck
-    neck:   fb([["neck01"], ["neck"]]),
+    // CC_Base: neck (NeckTwist01 → "necktwist01" contains "neck") | AccuRig: neck_01→"neck01"
+    neck:   fb([["neck"], ["neck01"]]),
     head:   fb([["head"]]),
-    // AccuRig: clavicle_l→"claviclel" | CC_Base: lclavicle
-    // NOTE: "clavicle_l" stripped = c,l,a,v,i,c,l,e,l = "claviclel" (l-e-l at end)
-    //       NOT "clavicell" (e-l-l) — 'l' comes before 'e' in "clavicle".
-    lShoulder: fb([["claviclel"], ["lclavicle"], ["lshoulder"], ["leftclavicle"]]),
-    rShoulder: fb([["clavicler"], ["rclavicle"], ["rshoulder"], ["rightclavicle"]]),
-    // AccuRig: upperarm_l→"upperarml" | CC_Base: lupperarm
-    lUpperArm: fb([["upperarml"], ["lupperarm"], ["leftupperarm"]]),
-    // AccuRig: lowerarm_l→"lowerarml" | CC_Base: lforearm
-    lForeArm:  fb([["lowerarml"], ["lforearm"],  ["leftforearm"]]),
-    // AccuRig: hand_l→"handl" | CC_Base: lhand  (traversal hits hand_l before ik_hand_l)
-    lHand:     fb([["handl"],     ["lhand"],      ["lefthand"]]),
+    // CC_Base: lclavicle | AccuRig: clavicle_l→"claviclel"
+    lShoulder: fb([["lclavicle"], ["claviclel"], ["lshoulder"], ["leftclavicle"]]),
+    rShoulder: fb([["rclavicle"], ["clavicler"], ["rshoulder"], ["rightclavicle"]]),
+    // CC_Base: lupperarm | AccuRig: upperarm_l→"upperarml"
+    lUpperArm: fb([["lupperarm"], ["upperarml"], ["leftupperarm"]]),
+    // CC_Base: lforearm | AccuRig: lowerarm_l→"lowerarml"
+    lForeArm:  fb([["lforearm"],  ["lowerarml"], ["leftforearm"]]),
+    // CC_Base: lhand | AccuRig: hand_l→"handl"  (traversal hits hand_l before ik_hand_l)
+    lHand:     fb([["lhand"],     ["handl"],      ["lefthand"]]),
     lFingers: [
       finger(root, "left", "thumb"),
       finger(root, "left", "index"),
@@ -105,10 +103,10 @@ function buildBoneStore(root: THREE.Object3D): BoneStore {
       finger(root, "left", "ring"),
       finger(root, "left", "pinky"),
     ],
-    // AccuRig: upperarm_r→"upperarmr" | CC_Base: rupperarm
-    rUpperArm: fb([["upperarmr"], ["rupperarm"], ["rightupperarm"]]),
-    rForeArm:  fb([["lowerarmr"], ["rforearm"],  ["rightforearm"]]),
-    rHand:     fb([["handr"],     ["rhand"],      ["righthand"]]),
+    // CC_Base: rupperarm | AccuRig: upperarm_r→"upperarmr"
+    rUpperArm: fb([["rupperarm"], ["upperarmr"], ["rightupperarm"]]),
+    rForeArm:  fb([["rforearm"],  ["lowerarmr"], ["rightforearm"]]),
+    rHand:     fb([["rhand"],     ["handr"],      ["righthand"]]),
     rFingers: [
       finger(root, "right", "thumb"),
       finger(root, "right", "index"),
@@ -116,13 +114,13 @@ function buildBoneStore(root: THREE.Object3D): BoneStore {
       finger(root, "right", "ring"),
       finger(root, "right", "pinky"),
     ],
-    // AccuRig: thigh_l→"thighl", calf_l→"calfl", foot_l→"footl"
-    lThigh: fb([["thighl"], ["leftthigh"], ["lupleg"]]),
-    rThigh: fb([["thighr"], ["rightthigh"], ["rupleg"]]),
-    lCalf:  fb([["calfl"],  ["leftcalf"],  ["lleg"]]),
-    rCalf:  fb([["calfr"],  ["rightcalf"], ["rleg"]]),
-    lFoot:  fb([["footl"],  ["leftfoot"]]),
-    rFoot:  fb([["footr"],  ["rightfoot"]]),
+    // CC_Base: lthigh/rthigh | AccuRig: thigh_l→"thighl"
+    lThigh: fb([["lthigh"], ["thighl"], ["leftthigh"], ["lupleg"]]),
+    rThigh: fb([["rthigh"], ["thighr"], ["rightthigh"], ["rupleg"]]),
+    lCalf:  fb([["lcalf"],  ["calfl"],  ["leftcalf"],  ["lleg"]]),
+    rCalf:  fb([["rcalf"],  ["calfr"],  ["rightcalf"], ["rleg"]]),
+    lFoot:  fb([["lfoot"],  ["footl"],  ["leftfoot"]]),
+    rFoot:  fb([["rfoot"],  ["footr"],  ["rightfoot"]]),
   };
 
   // Debug log
@@ -187,20 +185,8 @@ function captureRestData(store: BoneStore): Map<THREE.Bone, BoneRestData> {
 
   for (const hand of [store.lFingers, store.rFingers]) {
     for (const fg of hand) {
-      chain(fg[0], fg[1]);
-      chain(fg[1], fg[2]);
-      // Distal bone (fg[2]): try real tip child, else extrapolate from bone's local +X
-      const distal = fg[2];
-      if (distal && !map.has(distal)) {
-        const tipChild = distal.children.find((c) => c instanceof THREE.Bone) as THREE.Bone | undefined;
-        if (tipChild) {
-          map.set(distal, captureArmRestData(distal, tipChild));
-        } else {
-          const wq = distal.getWorldQuaternion(new THREE.Quaternion());
-          const worldDir = new THREE.Vector3(1, 0, 0).applyQuaternion(wq).normalize();
-          map.set(distal, { localQuat: distal.quaternion.clone(), worldDir });
-        }
-      }
+      // Curl-angle approach: only need localQuat for each finger bone.
+      euler(fg[0]); euler(fg[1]); euler(fg[2]);
     }
   }
   return map;
@@ -489,13 +475,15 @@ function computeTargets(
     }
   }
 
-  // ── Fingers — all 3 joints per digit ─────────────────────────────────
-  // Max rotation clamped to 75° for proximal/intermediate to prevent wild
-  // overextension from noisy landmarks.
-  // Distal (j=2) is driven proportionally from the intermediate (j=1) at 70%
-  // to eliminate the virtual rest-direction instability entirely.
-  const FINGER_MAX_ANGLE = 75;
+  // ── Fingers — curl-angle approach ────────────────────────────────────
+  // For each proximal/intermediate joint: measure the 2D bend angle between the
+  // incoming and outgoing landmark segments at that joint. Apply as a local-X
+  // rotation on the rest quaternion. This keeps fingers at rest when the hand
+  // is open (angle ≈ 0) and only curls them inward, eliminating hyperextension.
+  // Distal (j=2) driven proportionally from intermediate at 70%.
+  const FINGER_MAX_RAD = THREE.MathUtils.degToRad(75);
   const DISTAL_SCALE = 0.7;
+  const X_AXIS = new THREE.Vector3(1, 0, 0);
 
   const applyFingers = (fingers: HandFingers, lms: Landmark2D[]) => {
     for (let f = 0; f < 5; f++) {
@@ -509,9 +497,32 @@ function computeTargets(
         if (!rest) continue;
         const [pi, ci] = pairs[j];
         if (!lms[pi] || !lms[ci]) continue;
-        const dir = handDir(lms[ci], lms[pi]);
-        if (dir.lengthSq() < 1e-10) continue;
-        targets.set(bone, computeAimTarget(bone, rest, dir, FINGER_MAX_ANGLE));
+
+        // Incoming segment endpoint: wrist(0) for j=0, else pairs[j-1][0]
+        const prevStart = j === 0 ? 0 : pairs[j - 1][0];
+        if (!lms[prevStart]) continue;
+
+        // 2D directions in image space (Y increases downward)
+        const inX = lms[pi].x - lms[prevStart].x;
+        const inY = lms[pi].y - lms[prevStart].y;
+        const outX = lms[ci].x - lms[pi].x;
+        const outY = lms[ci].y - lms[pi].y;
+        const inLen = Math.hypot(inX, inY);
+        const outLen = Math.hypot(outX, outY);
+        if (inLen < 1e-6 || outLen < 1e-6) continue;
+
+        // Bend angle = acos(dot) of unit vectors — always in [0, π], never negative.
+        // A value of 0 means perfectly straight (open hand); larger = more curled.
+        const dot = Math.max(-1, Math.min(1, (inX * outX + inY * outY) / (inLen * outLen)));
+        const bendAngle = Math.min(Math.acos(dot), FINGER_MAX_RAD);
+
+        // Apply bend around local X-axis (curl axis) offset from rest quaternion.
+        targets.set(
+          bone,
+          rest.localQuat.clone().multiply(
+            new THREE.Quaternion().setFromAxisAngle(X_AXIS, bendAngle)
+          )
+        );
       }
 
       // Distal joint: proportional from intermediate rather than independent aim
@@ -522,11 +533,9 @@ function computeTargets(
         const intermediateRest = restData.get(intermediate);
         const intermediateTarget = targets.get(intermediate);
         if (distalRest && intermediateRest && intermediateTarget) {
-          // Delta rotation applied to the intermediate bone from its rest pose
           const delta = intermediateTarget
             .clone()
             .multiply(intermediateRest.localQuat.clone().invert());
-          // Scale the rotation to DISTAL_SCALE (slerp from identity)
           const scaledDelta = new THREE.Quaternion().slerp(delta, DISTAL_SCALE);
           targets.set(distal, scaledDelta.multiply(distalRest.localQuat.clone()));
         }
@@ -550,6 +559,14 @@ export default function AvatarScene() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState("Initializing…");
   const [showSkeleton, setShowSkeleton] = useState(true);
+  const [bgColor, setBgColor] = useState<"#000000" | "#ffffff">("#000000");
+  const bgColorRef = useRef<"#000000" | "#ffffff">("#000000");
+  const sceneRef = useRef<THREE.Scene | null>(null);
+
+  useEffect(() => {
+    bgColorRef.current = bgColor;
+    if (sceneRef.current) sceneRef.current.background = new THREE.Color(bgColor);
+  }, [bgColor]);
 
   const holisticDataRef = useRef<HolisticResults | null>(null);
   const boneStoreRef = useRef<BoneStore | null>(null);
@@ -589,6 +606,8 @@ export default function AvatarScene() {
     mountEl.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
+    scene.background = new THREE.Color(bgColorRef.current);
+    sceneRef.current = scene;
     const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 100);
     camera.position.set(0, 1.5, 2.5);
     camera.lookAt(0, 1, 0);
@@ -604,7 +623,7 @@ export default function AvatarScene() {
     let animFrameId: number;
 
     new GLTFLoader().load(
-      new URL("/hamzat.glb", window.location.origin).href,
+      new URL("/avatar_full_rig.glb", window.location.origin).href,
       (gltf) => {
         const model = gltf.scene;
         model.scale.setScalar(0.1);
@@ -697,7 +716,7 @@ export default function AvatarScene() {
   }, []);
 
   return (
-    <div style={{ width: "100vw", height: "100vh", overflow: "hidden", background: "#000" }}>
+    <div style={{ width: "100vw", height: "100vh", overflow: "hidden", background: bgColor }}>
       <div ref={mountRef} style={{ position: "absolute", inset: 0 }} />
 
       <div
@@ -739,6 +758,22 @@ export default function AvatarScene() {
         }}
       >
         {showSkeleton ? "skeleton on" : "skeleton off"}
+      </button>
+
+      <button
+        onClick={() => setBgColor((c) => (c === "#000000" ? "#ffffff" : "#000000"))}
+        style={{
+          position: "fixed", bottom: 12, right: 360,
+          fontFamily: "monospace", fontSize: 12,
+          color: bgColor === "#ffffff" ? "#333" : "#aaa",
+          background: bgColor === "#ffffff" ? "rgba(255,255,255,0.85)" : "rgba(0,0,0,0.6)",
+          border: `1px solid ${bgColor === "#ffffff" ? "rgba(0,0,0,0.25)" : "rgba(180,180,180,0.3)"}`,
+          borderRadius: 4, padding: "4px 10px",
+          cursor: "pointer", zIndex: 12,
+          transition: "color 0.15s, background 0.15s, border-color 0.15s",
+        }}
+      >
+        {bgColor === "#ffffff" ? "bg: white" : "bg: black"}
       </button>
     </div>
   );
