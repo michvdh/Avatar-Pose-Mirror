@@ -54,11 +54,13 @@ interface BoneStore {
 // ─── Bone discovery ────────────────────────────────────────────────────────
 
 // Side-specific keyword: use the first letter immediately before a keyword
-// so "lupperarm" matches CC_Base_L_Upperarm→"ccbaselupperarm" but NOT R_Upperarm→"ccbaserupperarm"
+// AccuRig names: thumb_01_l → "thumb01l", index_02_r → "index02r"
+// CC_Base names: CC_Base_L_Thumb1 → "ccbaselthumb1"
 function finger(root: THREE.Object3D, side: string, name: string): FingerBones {
   const s = side[0]; // "l" or "r"
   const f = (n: number) =>
     findBone(root, [
+      [`${name}0${n}${s}`],         // AccuRig: thumb01l, index02r, middle03l
       [`${s}${name}${n}`],          // CC_Base: lthumb1, rindex2
       [`${side}hand${name}${n}`],   // Mixamo: lefthandthumb1
       [`${name}${n}`, s, "hand"],   // broad fallback
@@ -69,20 +71,33 @@ function finger(root: THREE.Object3D, side: string, name: string): FingerBones {
 function buildBoneStore(root: THREE.Object3D): BoneStore {
   const fb = (sets: string[][]) => findBone(root, sets);
 
+  // Dump all bone names once so mapping can be verified in the console
+  const allBones: string[] = [];
+  root.traverse(obj => { if (obj instanceof THREE.Bone) allBones.push(obj.name); });
+  console.log("[bones] hierarchy:", allBones.join(", "));
+
   const store: BoneStore = {
     root,
-    hips: fb([["hips"], ["hip"], ["pelvis"]]),
-    spine: fb([["spine01"], ["spine1"], ["spine"], ["torso"]]),
+    // AccuRig: pelvis | CC_Base: hips/hip
+    hips:   fb([["pelvis"], ["hips"], ["hip"]]),
+    // AccuRig: spine_01→"spine01" | CC_Base: spine01/spine
+    spine:  fb([["spine01"], ["spine1"], ["spine"], ["torso"]]),
+    // AccuRig: spine_02→"spine02" | CC_Base: spine02/chest
     spine1: fb([["spine02"], ["spine2"], ["chest"], ["upperchest"]]),
-    neck: fb([["neck"]]),
-    head: fb([["head"]]),
-    // Clavicles — CC_Base uses "clavicle"
-    lShoulder: fb([["lclavicle"], ["lshoulder"], ["leftclavicle"], ["leftshoulder"]]),
-    rShoulder: fb([["rclavicle"], ["rshoulder"], ["rightclavicle"], ["rightshoulder"]]),
-    // Avatar LEFT arm — "lupperarm" only matches l_upperarm not r_upperarm
-    lUpperArm: fb([["lupperarm"], ["leftarm"], ["leftupperarm"]]),
-    lForeArm:  fb([["lforearm"],  ["leftforearm"]]),
-    lHand:     fb([["lhand"],     ["lefthand"]]),
+    // AccuRig: neck_01→"neck01" | CC_Base: neck
+    neck:   fb([["neck01"], ["neck"]]),
+    head:   fb([["head"]]),
+    // AccuRig: clavicle_l→"claviclel" | CC_Base: lclavicle
+    // NOTE: "clavicle_l" stripped = c,l,a,v,i,c,l,e,l = "claviclel" (l-e-l at end)
+    //       NOT "clavicell" (e-l-l) — 'l' comes before 'e' in "clavicle".
+    lShoulder: fb([["claviclel"], ["lclavicle"], ["lshoulder"], ["leftclavicle"]]),
+    rShoulder: fb([["clavicler"], ["rclavicle"], ["rshoulder"], ["rightclavicle"]]),
+    // AccuRig: upperarm_l→"upperarml" | CC_Base: lupperarm
+    lUpperArm: fb([["upperarml"], ["lupperarm"], ["leftupperarm"]]),
+    // AccuRig: lowerarm_l→"lowerarml" | CC_Base: lforearm
+    lForeArm:  fb([["lowerarml"], ["lforearm"],  ["leftforearm"]]),
+    // AccuRig: hand_l→"handl" | CC_Base: lhand  (traversal hits hand_l before ik_hand_l)
+    lHand:     fb([["handl"],     ["lhand"],      ["lefthand"]]),
     lFingers: [
       finger(root, "left", "thumb"),
       finger(root, "left", "index"),
@@ -90,10 +105,10 @@ function buildBoneStore(root: THREE.Object3D): BoneStore {
       finger(root, "left", "ring"),
       finger(root, "left", "pinky"),
     ],
-    // Avatar RIGHT arm
-    rUpperArm: fb([["rupperarm"], ["rightarm"], ["rightupperarm"]]),
-    rForeArm:  fb([["rforearm"],  ["rightforearm"]]),
-    rHand:     fb([["rhand"],     ["righthand"]]),
+    // AccuRig: upperarm_r→"upperarmr" | CC_Base: rupperarm
+    rUpperArm: fb([["upperarmr"], ["rupperarm"], ["rightupperarm"]]),
+    rForeArm:  fb([["lowerarmr"], ["rforearm"],  ["rightforearm"]]),
+    rHand:     fb([["handr"],     ["rhand"],      ["righthand"]]),
     rFingers: [
       finger(root, "right", "thumb"),
       finger(root, "right", "index"),
@@ -101,19 +116,19 @@ function buildBoneStore(root: THREE.Object3D): BoneStore {
       finger(root, "right", "ring"),
       finger(root, "right", "pinky"),
     ],
-    // Legs — CC_Base_L/R_Thigh, CC_Base_L/R_Calf, CC_Base_L/R_Foot
-    lThigh: fb([["lthigh"], ["leftthigh"], ["lupleg"], ["leftupleg"]]),
-    rThigh: fb([["rthigh"], ["rightthigh"], ["rupleg"], ["rightupleg"]]),
-    lCalf:  fb([["lcalf"],  ["leftcalf"],  ["lleg"],  ["leftleg"]]),
-    rCalf:  fb([["rcalf"],  ["rightcalf"], ["rleg"],  ["rightleg"]]),
-    lFoot:  fb([["lfoot"],  ["leftfoot"]]),
-    rFoot:  fb([["rfoot"],  ["rightfoot"]]),
+    // AccuRig: thigh_l→"thighl", calf_l→"calfl", foot_l→"footl"
+    lThigh: fb([["thighl"], ["leftthigh"], ["lupleg"]]),
+    rThigh: fb([["thighr"], ["rightthigh"], ["rupleg"]]),
+    lCalf:  fb([["calfl"],  ["leftcalf"],  ["lleg"]]),
+    rCalf:  fb([["calfr"],  ["rightcalf"], ["rleg"]]),
+    lFoot:  fb([["footl"],  ["leftfoot"]]),
+    rFoot:  fb([["footr"],  ["rightfoot"]]),
   };
 
   // Debug log
   const report = (label: string, b: THREE.Bone | null) =>
     console.log(`[bones] ${label}: ${b?.name ?? "NOT FOUND"}`);
-  report("hips", store.hips); report("spine", store.spine);
+  report("hips", store.hips); report("spine", store.spine); report("spine1", store.spine1);
   report("neck", store.neck); report("head", store.head);
   report("lShoulder", store.lShoulder); report("rShoulder", store.rShoulder);
   report("lUpperArm", store.lUpperArm); report("lForeArm", store.lForeArm); report("lHand", store.lHand);
@@ -228,12 +243,16 @@ function worldDir(child: Landmark3D, parent: Landmark3D): THREE.Vector3 {
   ).normalize();
 }
 
-// poseLandmarks: image-space (Y down, X right), negate both X and Y for world-up mirror
+// poseLandmarks: image-space (Y down, X right).
+// Negate X (mirror), Y (image-down→world-up), AND Z:
+//   poseLandmarks Z: negative=closer to camera.
+//   Three.js Z: positive=toward viewer (camera).
+//   Negating makes "reaching forward" produce a positive Three.js Z direction.
 function poseDir(child: Landmark3D, parent: Landmark3D): THREE.Vector3 {
   return new THREE.Vector3(
     -(child.x - parent.x),
     -(child.y - parent.y),
-     (child.z - parent.z)
+    -(child.z - parent.z)
   ).normalize();
 }
 
@@ -285,37 +304,31 @@ function computeTargets(
     const ls = wl[11], rs = wl[12]; // left/right shoulders
     const lh = wl[23], rh = wl[24]; // left/right hips
 
-    // ── Hips yaw (torso twist from shoulder Z-spread) ──────────────────
-    if (store.hips && isVis(ls) && isVis(rs)) {
+    // ── Pelvis locked at rest — yaw goes to spine so legs stay planted ─
+    if (store.hips) {
+      const rest = restData.get(store.hips);
+      if (rest) targets.set(store.hips, rest.localQuat.clone());
+    }
+
+    // ── Spine: yaw (torso twist) + forward lean combined ───────────────
+    // Yaw is applied here instead of hips so the thigh/leg bones (children
+    // of pelvis, not spine) don't rotate — feet stay planted.
+    if (store.spine && isVis(ls) && isVis(rs) && isVis(lh) && isVis(rh)) {
       const dx = rs.x - ls.x;
       const dz = rs.z - ls.z;
       const yaw = Math.atan2(dz, -dx) * 0.65;
-      const rest = restData.get(store.hips)!;
-      targets.set(
-        store.hips,
-        rest.localQuat.clone().multiply(
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw)
-        )
-      );
-    }
 
-    // ── Spine forward/back lean from shoulder Z vs hip Z ──────────────
-    if (store.spine && isVis(ls) && isVis(rs) && isVis(lh) && isVis(rh)) {
       const shMidZ = (ls.z + rs.z) / 2;
       const hipMidZ = (lh.z + rh.z) / 2;
       const shMidY = (ls.y + rs.y) / 2;
       const hipMidY = (lh.y + rh.y) / 2;
-      // ySign: worldLandmarks → shMidY > hipMidY; poseLandmarks → shMidY < hipMidY
-      // Negate Z delta: in poseLandmarks, smaller Z = closer to camera.
-      // Leaning forward brings shoulders closer → shMidZ drops → negate so positive lean = forward.
+      // Negate Z delta: smaller Z = closer to camera; leaning forward → shMidZ drops → positive lean.
       const forwardLean = Math.atan2(-(shMidZ - hipMidZ), Math.max(0.01, ySign * (shMidY - hipMidY))) * 0.5;
+
       const rest = restData.get(store.spine)!;
-      targets.set(
-        store.spine,
-        rest.localQuat.clone().multiply(
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), forwardLean)
-        )
-      );
+      const yawQ  = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+      const leanQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), forwardLean);
+      targets.set(store.spine, rest.localQuat.clone().multiply(yawQ).multiply(leanQ));
     }
 
     // ── Spine1 lateral lean from shoulder vs hip X midpoint offset ─────
@@ -334,43 +347,53 @@ function computeTargets(
       );
     }
 
-    // ── Clavicle elevation from arm raise ──────────────────────────────
-    // Avatar LEFT clavicle driven by user's RIGHT shoulder/elbow (mirrored)
-    // (wl[14].y - rs.y): poseLandmarks arm-up → elbow.y < shoulder.y → negative * -1.2 = positive ✓
-    if (store.lShoulder && isVis(rs) && isVis(wl[14])) {
-      const elevation = Math.max(-0.25, Math.min(0.45, (wl[14].y - rs.y) * ySign * -1.2));
-      const rest = restData.get(store.lShoulder)!;
-      targets.set(
-        store.lShoulder,
-        rest.localQuat.clone().multiply(
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), elevation)
-        )
-      );
-    }
-    // Avatar RIGHT clavicle driven by user's LEFT shoulder/elbow
-    if (store.rShoulder && isVis(ls) && isVis(wl[13])) {
-      const elevation = Math.max(-0.25, Math.min(0.45, (wl[13].y - ls.y) * ySign * -1.2));
-      const rest = restData.get(store.rShoulder)!;
-      targets.set(
-        store.rShoulder,
-        rest.localQuat.clone().multiply(
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -elevation)
-        )
-      );
-    }
+    // ── Visibility gatekeeper: all four elbows/wrists must be clear ────
+    // If any limb is partially occluded, skip the entire arm+clavicle block
+    // to avoid the avatar snapping to bad poses on partial visibility frames.
+    const armVis =
+      (wl[13]?.visibility ?? 0) >= 0.65 &&  // left elbow
+      (wl[14]?.visibility ?? 0) >= 0.65 &&  // right elbow
+      (wl[15]?.visibility ?? 0) >= 0.65 &&  // left wrist
+      (wl[16]?.visibility ?? 0) >= 0.65;    // right wrist
 
-    // ── Arms ───────────────────────────────────────────────────────────
-    // Avatar LEFT arm ← user's RIGHT arm (MP: shoulder=12, elbow=14, wrist=16)
-    if (isVis(rs) && isVis(wl[14]))
-      set(store.lUpperArm, restData.get(store.lUpperArm!), dirFn(wl[14], rs));
-    if (isVis(wl[14]) && isVis(wl[16]))
-      set(store.lForeArm, restData.get(store.lForeArm!), dirFn(wl[16], wl[14]));
+    if (armVis) {
+      // ── Clavicle elevation from arm raise ────────────────────────────
+      // Avatar LEFT clavicle driven by user's RIGHT shoulder/elbow (mirrored)
+      if (store.lShoulder && isVis(rs) && isVis(wl[14])) {
+        const elevation = Math.max(-0.25, Math.min(0.45, (wl[14].y - rs.y) * ySign * -1.2));
+        const rest = restData.get(store.lShoulder)!;
+        targets.set(
+          store.lShoulder,
+          rest.localQuat.clone().multiply(
+            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), elevation)
+          )
+        );
+      }
+      // Avatar RIGHT clavicle driven by user's LEFT shoulder/elbow
+      if (store.rShoulder && isVis(ls) && isVis(wl[13])) {
+        const elevation = Math.max(-0.25, Math.min(0.45, (wl[13].y - ls.y) * ySign * -1.2));
+        const rest = restData.get(store.rShoulder)!;
+        targets.set(
+          store.rShoulder,
+          rest.localQuat.clone().multiply(
+            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -elevation)
+          )
+        );
+      }
 
-    // Avatar RIGHT arm ← user's LEFT arm (MP: shoulder=11, elbow=13, wrist=15)
-    if (isVis(ls) && isVis(wl[13]))
-      set(store.rUpperArm, restData.get(store.rUpperArm!), dirFn(wl[13], ls));
-    if (isVis(wl[13]) && isVis(wl[15]))
-      set(store.rForeArm, restData.get(store.rForeArm!), dirFn(wl[15], wl[13]));
+      // ── Arms ─────────────────────────────────────────────────────────
+      // Avatar LEFT arm ← user's RIGHT arm (MP: shoulder=12, elbow=14, wrist=16)
+      if (isVis(rs) && isVis(wl[14]))
+        set(store.lUpperArm, restData.get(store.lUpperArm!), dirFn(wl[14], rs));
+      if (isVis(wl[14]) && isVis(wl[16]))
+        set(store.lForeArm, restData.get(store.lForeArm!), dirFn(wl[16], wl[14]));
+
+      // Avatar RIGHT arm ← user's LEFT arm (MP: shoulder=11, elbow=13, wrist=15)
+      if (isVis(ls) && isVis(wl[13]))
+        set(store.rUpperArm, restData.get(store.rUpperArm!), dirFn(wl[13], ls));
+      if (isVis(wl[13]) && isVis(wl[15]))
+        set(store.rForeArm, restData.get(store.rForeArm!), dirFn(wl[15], wl[13]));
+    }
 
     // ── Neck tilt from nose/shoulder midpoint ──────────────────────────
     const nose = wl[0];
@@ -383,7 +406,9 @@ function computeTargets(
       const lateralTilt = Math.atan2(-(nose.x - shMidX), neckHeight) * 0.5;
       // Negate Z delta: smaller Z = closer to camera in poseLandmarks.
       // Tilting chin forward brings nose closer → nose.z drops → negate so positive tilt = forward.
-      const forwardTilt = Math.atan2(-(nose.z - shMidZ), neckHeight) * 0.4;
+      // Additional negation (*-0.4) corrects AccuRig head/neck bone roll: the local X-axis
+      // on AccuRig neck bones points opposite to CC_Base, so pitch must be inverted.
+      const forwardTilt = Math.atan2(-(nose.z - shMidZ), neckHeight) * -0.4;
       const rest = restData.get(store.neck)!;
       targets.set(
         store.neck,
@@ -568,7 +593,7 @@ export default function AvatarScene() {
     let animFrameId: number;
 
     new GLTFLoader().load(
-      new URL("/avatar_full_rig.glb", window.location.origin).href,
+      new URL("/hamzat.glb", window.location.origin).href,
       (gltf) => {
         const model = gltf.scene;
         model.scale.setScalar(0.1);
