@@ -14,6 +14,7 @@ export interface Landmark2D {
 }
 
 export interface HolisticResults {
+  poseLandmarks?: Landmark3D[];
   poseWorldLandmarks?: Landmark3D[];
   leftHandLandmarks?: Landmark2D[];
   rightHandLandmarks?: Landmark2D[];
@@ -26,7 +27,7 @@ type OnStatusCallback = (status: string) => void;
 
 // Load MediaPipe Holistic from CDN and cache the constructor on window
 // (avoids Vite bundling WASM packages, which is the standard browser pattern)
-const CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/holistic";
+const CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629";
 
 function loadHolisticCDN(): Promise<new (opts: object) => HolisticInstance> {
   type HolisticCtor = new (opts: object) => HolisticInstance;

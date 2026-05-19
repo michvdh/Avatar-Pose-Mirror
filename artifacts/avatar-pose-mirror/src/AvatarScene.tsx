@@ -156,12 +156,21 @@ function captureRestData(store: BoneStore): Map<THREE.Bone, BoneRestData> {
 
 const isVis = (lm: Landmark3D) => (lm.visibility ?? 1) >= 0.3;
 
-// poseWorldLandmarks: Y is already up, negate X for mirror
+// poseWorldLandmarks: Y already up, negate X for mirror
 function worldDir(child: Landmark3D, parent: Landmark3D): THREE.Vector3 {
   return new THREE.Vector3(
     -(child.x - parent.x),
-    (child.y - parent.y),
-    (child.z - parent.z)
+     (child.y - parent.y),
+     (child.z - parent.z)
+  ).normalize();
+}
+
+// poseLandmarks: image-space (Y down, X right), negate both X and Y for world-up mirror
+function poseDir(child: Landmark3D, parent: Landmark3D): THREE.Vector3 {
+  return new THREE.Vector3(
+    -(child.x - parent.x),
+    -(child.y - parent.y),
+     (child.z - parent.z)
   ).normalize();
 }
 
@@ -196,14 +205,21 @@ function computeTargets(
     if (bone && rest) targets.set(bone, computeAimTarget(bone, rest, dir));
   };
 
-  const wl = data.poseWorldLandmarks;
-  // Holistic labels hands from subject's perspective: right = user's right, left = user's left
+  // Prefer poseLandmarks (always populated) over poseWorldLandmarks (unreliable on CDN builds)
+  const wl = data.poseLandmarks ?? data.poseWorldLandmarks;
+  // poseLandmarks uses image-space Y (down); poseWorldLandmarks uses world-space Y (up).
+  // ySign corrects denominators and heights so formulas stay identical.
+  const isImgSpace = !!data.poseLandmarks;
+  const ySign = isImgSpace ? -1 : 1;
+  // Direction function: poseDir negates Y (image→world); worldDir leaves Y alone.
+  const dirFn = isImgSpace ? poseDir : worldDir;
+
   // Mirror: user RIGHT → avatar LeftHand (visual right); user LEFT → avatar RightHand (visual left)
   const rhLms = data.rightHandLandmarks; // user RIGHT → avatar lFingers
   const lhLms = data.leftHandLandmarks;  // user LEFT  → avatar rFingers
 
   if (wl && wl.length >= 25) {
-    const ls = wl[11], rs = wl[12]; // left/right shoulders in MP world
+    const ls = wl[11], rs = wl[12]; // left/right shoulders
     const lh = wl[23], rh = wl[24]; // left/right hips
 
     // ── Hips yaw (torso twist from shoulder Z-spread) ──────────────────
@@ -226,7 +242,8 @@ function computeTargets(
       const hipMidZ = (lh.z + rh.z) / 2;
       const shMidY = (ls.y + rs.y) / 2;
       const hipMidY = (lh.y + rh.y) / 2;
-      const forwardLean = Math.atan2(shMidZ - hipMidZ, Math.max(0.01, shMidY - hipMidY)) * 0.5;
+      // ySign: worldLandmarks → shMidY > hipMidY; poseLandmarks → shMidY < hipMidY
+      const forwardLean = Math.atan2(shMidZ - hipMidZ, Math.max(0.01, ySign * (shMidY - hipMidY))) * 0.5;
       const rest = restData.get(store.spine)!;
       targets.set(
         store.spine,
@@ -242,7 +259,7 @@ function computeTargets(
       const hipMidX = (lh.x + rh.x) / 2;
       const shMidY = (ls.y + rs.y) / 2;
       const hipMidY = (lh.y + rh.y) / 2;
-      const lateralLean = Math.atan2(shMidX - hipMidX, Math.max(0.01, shMidY - hipMidY)) * 0.4;
+      const lateralLean = Math.atan2(shMidX - hipMidX, Math.max(0.01, ySign * (shMidY - hipMidY))) * 0.4;
       const rest = restData.get(store.spine1)!;
       targets.set(
         store.spine1,
@@ -254,8 +271,9 @@ function computeTargets(
 
     // ── Clavicle elevation from arm raise ──────────────────────────────
     // Avatar LEFT clavicle driven by user's RIGHT shoulder/elbow (mirrored)
+    // (wl[14].y - rs.y): poseLandmarks arm-up → elbow.y < shoulder.y → negative * -1.2 = positive ✓
     if (store.lShoulder && isVis(rs) && isVis(wl[14])) {
-      const elevation = Math.max(-0.25, Math.min(0.45, (wl[14].y - rs.y) * -1.2));
+      const elevation = Math.max(-0.25, Math.min(0.45, (wl[14].y - rs.y) * ySign * -1.2));
       const rest = restData.get(store.lShoulder)!;
       targets.set(
         store.lShoulder,
@@ -266,7 +284,7 @@ function computeTargets(
     }
     // Avatar RIGHT clavicle driven by user's LEFT shoulder/elbow
     if (store.rShoulder && isVis(ls) && isVis(wl[13])) {
-      const elevation = Math.max(-0.25, Math.min(0.45, (wl[13].y - ls.y) * -1.2));
+      const elevation = Math.max(-0.25, Math.min(0.45, (wl[13].y - ls.y) * ySign * -1.2));
       const rest = restData.get(store.rShoulder)!;
       targets.set(
         store.rShoulder,
@@ -279,15 +297,15 @@ function computeTargets(
     // ── Arms ───────────────────────────────────────────────────────────
     // Avatar LEFT arm ← user's RIGHT arm (MP: shoulder=12, elbow=14, wrist=16)
     if (isVis(rs) && isVis(wl[14]))
-      set(store.lUpperArm, restData.get(store.lUpperArm!), worldDir(wl[14], rs));
+      set(store.lUpperArm, restData.get(store.lUpperArm!), dirFn(wl[14], rs));
     if (isVis(wl[14]) && isVis(wl[16]))
-      set(store.lForeArm, restData.get(store.lForeArm!), worldDir(wl[16], wl[14]));
+      set(store.lForeArm, restData.get(store.lForeArm!), dirFn(wl[16], wl[14]));
 
     // Avatar RIGHT arm ← user's LEFT arm (MP: shoulder=11, elbow=13, wrist=15)
     if (isVis(ls) && isVis(wl[13]))
-      set(store.rUpperArm, restData.get(store.rUpperArm!), worldDir(wl[13], ls));
+      set(store.rUpperArm, restData.get(store.rUpperArm!), dirFn(wl[13], ls));
     if (isVis(wl[13]) && isVis(wl[15]))
-      set(store.rForeArm, restData.get(store.rForeArm!), worldDir(wl[15], wl[13]));
+      set(store.rForeArm, restData.get(store.rForeArm!), dirFn(wl[15], wl[13]));
 
     // ── Neck tilt from nose/shoulder midpoint ──────────────────────────
     const nose = wl[0];
@@ -295,10 +313,9 @@ function computeTargets(
       const shMidX = (ls.x + rs.x) / 2;
       const shMidY = (ls.y + rs.y) / 2;
       const shMidZ = (ls.z + rs.z) / 2;
-      const neckHeight = Math.max(0.01, nose.y - shMidY);
-      // Lateral tilt: negate X for mirror
+      // ySign: worldLandmarks → nose.y > shMidY; poseLandmarks → nose.y < shMidY
+      const neckHeight = Math.max(0.01, ySign * (nose.y - shMidY));
       const lateralTilt = Math.atan2(-(nose.x - shMidX), neckHeight) * 0.5;
-      // Forward/back tilt from Z depth
       const forwardTilt = Math.atan2(nose.z - shMidZ, neckHeight) * 0.4;
       const rest = restData.get(store.neck)!;
       targets.set(
@@ -314,8 +331,6 @@ function computeTargets(
     // ── Head yaw from ear Z-difference ─────────────────────────────────
     const earL = wl[7], earR = wl[8];
     if (store.head && isVis(earL) && isVis(earR)) {
-      // User turns head right → earR moves closer (earR.z decreases relative to earL.z)
-      // Negate for mirror so avatar mirrors the yaw
       const earDZ = earL.z - earR.z;
       const earDX = Math.abs(earR.x - earL.x);
       const headYaw = Math.atan2(earDZ, Math.max(0.01, earDX)) * -0.6;
@@ -418,7 +433,7 @@ export default function AvatarScene() {
     videoRef,
     (results) => {
       holisticDataRef.current = results;
-      const hasBody = (results.poseWorldLandmarks?.length ?? 0) > 0;
+      const hasBody = (results.poseLandmarks?.length ?? results.poseWorldLandmarks?.length ?? 0) > 0;
       const hasHands = results.leftHandLandmarks || results.rightHandLandmarks;
       if (hasBody)
         setStatus(hasHands ? "Tracking body + hands" : "Tracking body");
