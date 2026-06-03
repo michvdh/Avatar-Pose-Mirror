@@ -67,13 +67,18 @@ function buildBoneStore(root: THREE.Object3D): BoneStore {
   const store: BoneStore = {
     root,
     hips:   fb([["pelvis"], ["hips"], ["hip"]]),
-    spine:  fb([["spine01"], ["spine1"], ["spine"], ["torso"]]),
-    spine1: fb([["spine02"], ["spine2"], ["chest"], ["upperchest"]]),
+    // spine: "spine01" catches CC_Base; plain "spine" relies on DFS (parent
+    // visited before children) to find Spine before Spine1/Spine2 on Mixamo.
+    spine:  fb([["spine01"], ["spine"], ["torso"]]),
+    spine1: fb([["spine02"], ["spine1"], ["spine2"], ["chest"], ["upperchest"]]),
     neck:   fb([["neck"], ["neck01"]]),
     head:   fb([["head"]]),
-    lShoulder: fb([["lclavicle"], ["claviclel"], ["lshoulder"], ["leftclavicle"]]),
-    rShoulder: fb([["rclavicle"], ["clavicler"], ["rshoulder"], ["rightclavicle"]]),
-    lUpperArm: fb([["lupperarm"], ["upperarml"], ["leftupperarm"]]),
+    // "leftshoulder"/"rightshoulder" catches Mixamo LeftShoulder/RightShoulder.
+    lShoulder: fb([["lclavicle"], ["claviclel"], ["leftshoulder"], ["lshoulder"], ["leftclavicle"]]),
+    rShoulder: fb([["rclavicle"], ["clavicler"], ["rightshoulder"], ["rshoulder"], ["rightclavicle"]]),
+    // "leftarm"/"rightarm" catches Mixamo LeftArm/RightArm (not LeftForeArm since
+    // "leftarm" is not a substring of "leftforearm").
+    lUpperArm: fb([["lupperarm"], ["upperarml"], ["leftupperarm"], ["leftarm"]]),
     lForeArm:  fb([["lforearm"],  ["lowerarml"], ["leftforearm"]]),
     lHand:     fb([["lhand"],     ["handl"],      ["lefthand"]]),
     lFingers: [
@@ -83,7 +88,7 @@ function buildBoneStore(root: THREE.Object3D): BoneStore {
       finger(root, "left", "ring"),
       finger(root, "left", "pinky"),
     ],
-    rUpperArm: fb([["rupperarm"], ["upperarmr"], ["rightupperarm"]]),
+    rUpperArm: fb([["rupperarm"], ["upperarmr"], ["rightupperarm"], ["rightarm"]]),
     rForeArm:  fb([["rforearm"],  ["lowerarmr"], ["rightforearm"]]),
     rHand:     fb([["rhand"],     ["handr"],      ["righthand"]]),
     rFingers: [
@@ -93,10 +98,12 @@ function buildBoneStore(root: THREE.Object3D): BoneStore {
       finger(root, "right", "ring"),
       finger(root, "right", "pinky"),
     ],
-    lThigh: fb([["lthigh"], ["thighl"], ["leftthigh"], ["lupleg"]]),
-    rThigh: fb([["rthigh"], ["thighr"], ["rightthigh"], ["rupleg"]]),
-    lCalf:  fb([["lcalf"],  ["calfl"],  ["leftcalf"],  ["lleg"]]),
-    rCalf:  fb([["rcalf"],  ["calfr"],  ["rightcalf"], ["rleg"]]),
+    // "leftupleg"/"rightupleg" catches Mixamo LeftUpLeg/RightUpLeg.
+    // "leftleg"/"rightleg" catches Mixamo LeftLeg/RightLeg (knee-to-ankle).
+    lThigh: fb([["lthigh"], ["thighl"], ["leftthigh"], ["lupleg"], ["leftupleg"]]),
+    rThigh: fb([["rthigh"], ["thighr"], ["rightthigh"], ["rupleg"], ["rightupleg"]]),
+    lCalf:  fb([["lcalf"],  ["calfl"],  ["leftcalf"],  ["lleg"],  ["leftleg"]]),
+    rCalf:  fb([["rcalf"],  ["calfr"],  ["rightcalf"], ["rleg"],  ["rightleg"]]),
     lFoot:  fb([["lfoot"],  ["footl"],  ["leftfoot"]]),
     rFoot:  fb([["rfoot"],  ["footr"],  ["rightfoot"]]),
   };
@@ -193,14 +200,23 @@ function computeTargets(
   const ls = imgLm[11], rs = imgLm[12]; 
 
   const getAnchorDir = (idxWrist: number, idxShoulder: number) => {
-    const pW = imgLm[idxWrist], pS = imgLm[idxShoulder];
+    // FIX: Use ONLY the true 3D world landmarks, ignoring the warped 2D image landmarks
     const wW = wrldLm[idxWrist], wS = wrldLm[idxShoulder];
-    const dx = -(pW.x - pS.x);
-    const dy = -(pW.y - pS.y);
-    const dist2D = Math.hypot(dx, dy);
-    let dz = -(wW.z - wS.z);
-    if (dist2D < 0.15) dz = 0.08; 
-    return new THREE.Vector3(dx, dy, dz).normalize();
+    
+    // MIRROR MATH: Invert all three axes. This maps MediaPipe's coordinate system 
+    // cleanly to Three.js while perfectly mirroring your physical movements.
+    const dx = -(wW.x - wS.x); 
+    const dy = -(wW.y - wS.y);
+    const dz = -(wW.z - wS.z);
+    
+    const dir = new THREE.Vector3(dx, dy, dz);
+    
+    // Safety fallback: prevents the app from crashing if the vector drops to absolute zero
+    if (dir.lengthSq() < 0.0001) {
+      return new THREE.Vector3(0, -1, 0); 
+    }
+    
+    return dir.normalize();
   };
 
   // --- 1. TORSO MATH ---
@@ -230,48 +246,45 @@ function computeTargets(
     }
   }
 
-  // --- 2. ARM MATH ---
+// --- 2. ARM MATH (MIRRORED & STABILIZED) ---
   const armVis = (imgLm[13]?.visibility ?? 0) >= 0.5 && (imgLm[14]?.visibility ?? 0) >= 0.5;
   if (armVis) {
-    if (store.lShoulder && isVis(rs) && isVis(imgLm[14])) {
-      const dy = -(imgLm[14].y - rs.y); 
-      targets.set(store.lShoulder, restData.get(store.lShoulder)!.localQuat.clone().multiply(
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.max(-0.25, Math.min(0.45, dy * 1.2)))
-      ));
-    }
-    if (store.rShoulder && isVis(ls) && isVis(imgLm[13])) {
-      const dy = -(imgLm[13].y - ls.y);
-      targets.set(store.rShoulder, restData.get(store.rShoulder)!.localQuat.clone().multiply(
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.max(-0.25, Math.min(0.45, dy * 1.2)))
-      ));
-    }
-    
+
+    // MIRROR MAPPING 1: User's RIGHT arm (12, 14, 16) drives Avatar's LEFT arm
     if (isVis(imgLm[12]) && isVis(imgLm[14])) {
       const rawUpper = getAnchorDir(14, 12);
       const lUpperRest = restData.get(store.lUpperArm!)!;
-      const upperTargetDir = rawUpper.clone().applyQuaternion(invTorsoQuat);
-      set(store.lUpperArm, lUpperRest, upperTargetDir);
-      
+      set(store.lUpperArm, lUpperRest, rawUpper);
+
       if (isVis(imgLm[16])) {
         const rawFore = getAnchorDir(16, 14);
         if (rawUpper.angleTo(rawFore) < THREE.MathUtils.degToRad(15)) rawFore.copy(rawUpper);
         const lForeRest = restData.get(store.lForeArm!)!;
-        const upperSwing = new THREE.Quaternion().setFromUnitVectors(lUpperRest.worldDir, upperTargetDir);
-        set(store.lForeArm, lForeRest, rawFore.clone().applyQuaternion(invTorsoQuat).applyQuaternion(upperSwing.invert()));
+        const upperSwing = new THREE.Quaternion().setFromUnitVectors(lUpperRest.worldDir, rawUpper);
+        set(store.lForeArm, lForeRest, rawFore.clone().applyQuaternion(upperSwing.clone().invert()));
       }
     }
+
+    // MIRROR MAPPING 2: User's LEFT arm (11, 13, 15) drives Avatar's RIGHT arm
     if (isVis(imgLm[11]) && isVis(imgLm[13])) {
       const rawUpper = getAnchorDir(13, 11);
       const rUpperRest = restData.get(store.rUpperArm!)!;
-      const upperTargetDir = rawUpper.clone().applyQuaternion(invTorsoQuat);
-      set(store.rUpperArm, rUpperRest, upperTargetDir);
+      set(store.rUpperArm, rUpperRest, rawUpper);
 
       if (isVis(imgLm[15])) {
         const rawFore = getAnchorDir(15, 13);
         if (rawUpper.angleTo(rawFore) < THREE.MathUtils.degToRad(15)) rawFore.copy(rawUpper);
+        
         const rForeRest = restData.get(store.rForeArm!)!;
-        const upperSwing = new THREE.Quaternion().setFromUnitVectors(rUpperRest.worldDir, upperTargetDir);
-        set(store.rForeArm, rForeRest, rawFore.clone().applyQuaternion(invTorsoQuat).applyQuaternion(upperSwing.invert()));
+        const upperSwing = new THREE.Quaternion().setFromUnitVectors(rUpperRest.worldDir, rawUpper);
+        
+        // 1. MUST keep .invert() so the elbow math stays anchored to the shoulder
+        const localFore = rawFore.clone().applyQuaternion(upperSwing.clone().invert());
+        
+        // 2. THE FIX: Negate the X axis to reverse the upward/backward bend.
+        localFore.x = -localFore.x;
+        
+        set(store.rForeArm, rForeRest, localFore);
       }
     }
   }
@@ -296,7 +309,7 @@ function computeTargets(
       const roll = Math.atan2(earDY, Math.max(0.01, earDX));
 
       // Build Quaternions - PITCH IS BOOSTED
-      const pitchQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -pitch * 1.2);
+      const pitchQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch * 1.2);
       const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw * 0.8);
       const rollQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -roll * 0.8);
 
@@ -390,7 +403,7 @@ export default function AvatarScene() {
     let animFrameId: number;
 
     new GLTFLoader().load(
-      new URL("/avatar_full_rig.glb", window.location.origin).href,
+      new URL("/male_patient_1.glb", window.location.origin).href,
       (gltf) => {
         const model = gltf.scene;
         model.scale.setScalar(0.1);
