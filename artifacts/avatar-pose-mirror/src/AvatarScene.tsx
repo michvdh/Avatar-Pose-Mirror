@@ -259,9 +259,17 @@ function computeTargets(
       if (isVis(imgLm[16])) {
         const rawFore = getAnchorDir(16, 14);
         if (rawUpper.angleTo(rawFore) < THREE.MathUtils.degToRad(15)) rawFore.copy(rawUpper);
+        
         const lForeRest = restData.get(store.lForeArm!)!;
         const upperSwing = new THREE.Quaternion().setFromUnitVectors(lUpperRest.worldDir, rawUpper);
-        set(store.lForeArm, lForeRest, rawFore.clone().applyQuaternion(upperSwing.clone().invert()));
+        
+        // 1. MUST keep .invert() so the elbow math stays anchored to the shoulder
+        const localFore = rawFore.clone().applyQuaternion(upperSwing.clone().invert());
+        
+        // REMOVED THE FIX: The left arm is the default Mixamo bone. 
+        // It does not need its axes flipped.
+        
+        set(store.lForeArm, lForeRest, localFore);
       }
     }
 
@@ -281,21 +289,73 @@ function computeTargets(
         // 1. MUST keep .invert() so the elbow math stays anchored to the shoulder
         const localFore = rawFore.clone().applyQuaternion(upperSwing.clone().invert());
         
-        // 2. THE FIX: Negate the X axis to reverse the upward/backward bend.
+        // 2. THE FINAL FIX: Flip X, Y, and Z to completely cancel out the Mixamo 
+        // right-arm mirror effect, forcing the hinge to fold naturally inward.
         localFore.x = -localFore.x;
+        localFore.y = -localFore.y;
+        localFore.z = -localFore.z;
         
         set(store.rForeArm, rForeRest, localFore);
       }
     }
   }
 
- // ─── HEAD & NECK MATH (FIXED: PITCH-PRIORITY) ─────────────────────────
+  // --- 3. HAND & FINGER MATH ---
+    const applyHandTracking = (
+      handLm: Landmark3D[],
+      handBone: THREE.Bone | null,
+      fingerBones: HandFingers
+    ) => {
+      if (!handLm || !handBone) return;
+
+      // 1. Orient the Wrist / Palm
+      // We calculate the direction from the wrist (0) to the middle finger knuckle (9).
+      // This tells the entire hand which way to point, fixing the "stiff hand" issue.
+      const dx = -(handLm[9].x - handLm[0].x);
+      const dy = -(handLm[9].y - handLm[0].y);
+      const dz = -(handLm[9].z - handLm[0].z);
+      const rawWrist = new THREE.Vector3(dx, dy, dz);
+      
+      if (rawWrist.lengthSq() > 0.0001) {
+        set(handBone, restData.get(handBone), rawWrist.normalize());
+      }
+
+      // 2. Orient the Fingers
+      // Loops through all 5 fingers, mapping the 3 joints of each finger.
+      fingerBones.forEach((finger, fIdx) => {
+        FINGER_PAIRS[fIdx].forEach(([pIdx, cIdx], bIdx) => {
+          const bone = finger[bIdx];
+          if (bone) {
+            const fx = -(handLm[cIdx].x - handLm[pIdx].x);
+            const fy = -(handLm[cIdx].y - handLm[pIdx].y);
+            const fz = -(handLm[cIdx].z - handLm[pIdx].z);
+            const rawFinger = new THREE.Vector3(fx, fy, fz);
+            
+            if (rawFinger.lengthSq() > 0.0001) {
+              set(bone, restData.get(bone), rawFinger.normalize());
+            }
+          }
+        });
+      });
+    };
+
+    // APPLY MIRRORED HANDS
+    // User's physical RIGHT hand drives Avatar's LEFT hand
+    if (data.rightHandLandmarks) {
+      applyHandTracking(data.rightHandLandmarks, store.lHand, store.lFingers);
+    }
+    // User's physical LEFT hand drives Avatar's RIGHT hand
+    if (data.leftHandLandmarks) {
+      applyHandTracking(data.leftHandLandmarks, store.rHand, store.rFingers);
+    }
+
+ // ─── HEAD & NECK MATH (FIXED: COUNTER-STEER) ─────────────────────────
     if (isVis(imgLm[0]) && isVis(imgLm[7]) && isVis(imgLm[8])) {
       const noseW = wrldLm[0];
       const earLW = wrldLm[7];
       const earRW = wrldLm[8];
 
-      // 1. PITCH (Up/Down) - Boosted multiplier (1.2 instead of 0.8)
+      // 1. PITCH (Up/Down) 
       const earMidY = (earLW.y + earRW.y) / 2;
       const pitch = Math.atan2(noseW.y - earMidY, 0.2);
 
@@ -308,19 +368,24 @@ function computeTargets(
       const earDY = earRW.y - earLW.y;
       const roll = Math.atan2(earDY, Math.max(0.01, earDX));
 
-      // Build Quaternions - PITCH IS BOOSTED
+      // Build raw face quaternions
       const pitchQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch * 1.2);
       const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw * 0.8);
       const rollQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -roll * 0.8);
 
-      const masterHeadQuat = new THREE.Quaternion().multiplyQuaternions(yawQ, pitchQ).multiply(rollQ);
+      // 4. THE COUNTER-STEER FIX:
+      // First, combine the raw face angles into an absolute world rotation
+      const faceWorldQuat = new THREE.Quaternion().multiplyQuaternions(yawQ, pitchQ).multiply(rollQ);
       
-      // Neck follows the turn (Yaw) and tilt (Roll) but only slightly follows Pitch
-      const neckQuat = new THREE.Quaternion().setFromEuler(
-        new THREE.Euler(pitch * 0.2, yaw * 0.3, roll * 0.3, "YXZ")
-      );
+      // Second, multiply by `invTorsoQuat` to mathematically subtract the spine's tilt!
+      const masterHeadQuat = invTorsoQuat.clone().multiply(faceWorldQuat);
       
-      // Head takes the full remaining rotation to capture the look-up/down
+      // 5. SMOOTH DISTRIBUTION:
+      // The neck takes 40% of the movement, smoothing out the counter-steer.
+      const identityQ = new THREE.Quaternion();
+      const neckQuat = identityQ.clone().slerp(masterHeadQuat, 0.4);
+      
+      // The head takes whatever rotation is left over from the neck.
       const headQuat = masterHeadQuat.clone().multiply(neckQuat.clone().invert());
 
       if (store.neck) targets.set(store.neck, restData.get(store.neck)!.localQuat.clone().multiply(neckQuat));
@@ -415,7 +480,7 @@ export default function AvatarScene() {
         const fovRad = THREE.MathUtils.degToRad(camera.fov);
         const zForHeight = (size.y / 2) / Math.tan(fovRad / 2);
         const zForWidth  = (size.x / 2) / (Math.tan(fovRad / 2) * camera.aspect);
-        const zDist = Math.max(zForHeight, zForWidth) * 1.2; 
+        const zDist = Math.max(zForHeight, zForWidth) * 1.50; 
         camera.position.set(center.x, center.y, center.z + zDist);
         camera.lookAt(center.x, center.y, center.z);
 
