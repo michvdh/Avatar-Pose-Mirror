@@ -227,9 +227,10 @@ function computeTargets(
     const shoulderDistXZ = Math.hypot(lsW.x - rsW.x, lsW.z - rsW.z);
     const lateralLean = Math.atan2(shoulderDY, Math.max(0.01, shoulderDistXZ)) * 1.5; 
     
-    const shoulderDist3D = Math.hypot(rsW.x - lsW.x, rsW.y - lsW.y, rsW.z - lsW.z);
-    const twistSine = Math.max(-1, Math.min(1, (rsW.z - lsW.z) / Math.max(0.01, shoulderDist3D)));
-    const yaw = Math.asin(twistSine) * 0.6; 
+    // FIX 3: Lock Torso Yaw. 
+    // Z-depth differences from webcams cause the avatar to drift/turn left or right 
+    // even when you are standing still. Setting yaw to 0 keeps the body squared.
+    const yaw = 0; 
     
     const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
     const latQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), lateralLean);
@@ -301,53 +302,63 @@ function computeTargets(
   }
 
   // --- 3. HAND & FINGER MATH ---
-    const applyHandTracking = (
-      handLm: Landmark3D[],
-      handBone: THREE.Bone | null,
-      fingerBones: HandFingers
-    ) => {
-      if (!handLm || !handBone) return;
+  const applyHandTracking = (
+    handLm: Landmark3D[],
+    handBone: THREE.Bone | null,
+    isAvatarLeft: boolean
+  ) => {
+    if (!handLm || !handBone) return;
 
-      // 1. Orient the Wrist / Palm
-      // We calculate the direction from the wrist (0) to the middle finger knuckle (9).
-      // This tells the entire hand which way to point, fixing the "stiff hand" issue.
-      const dx = -(handLm[9].x - handLm[0].x);
-      const dy = -(handLm[9].y - handLm[0].y);
-      const dz = -(handLm[9].z - handLm[0].z);
-      const rawWrist = new THREE.Vector3(dx, dy, dz);
-      
-      if (rawWrist.lengthSq() > 0.0001) {
-        set(handBone, restData.get(handBone), rawWrist.normalize());
-      }
+    // Determine physical arm mapping to get the forearm direction
+    const elbowIdx = isAvatarLeft ? 14 : 13;
+    const wristIdx = isAvatarLeft ? 16 : 15;
+    const forearmDir = getAnchorDir(wristIdx, elbowIdx);
 
-      // 2. Orient the Fingers
-      // Loops through all 5 fingers, mapping the 3 joints of each finger.
-      fingerBones.forEach((finger, fIdx) => {
-        FINGER_PAIRS[fIdx].forEach(([pIdx, cIdx], bIdx) => {
-          const bone = finger[bIdx];
-          if (bone) {
-            const fx = -(handLm[cIdx].x - handLm[pIdx].x);
-            const fy = -(handLm[cIdx].y - handLm[pIdx].y);
-            const fz = -(handLm[cIdx].z - handLm[pIdx].z);
-            const rawFinger = new THREE.Vector3(fx, fy, fz);
-            
-            if (rawFinger.lengthSq() > 0.0001) {
-              set(bone, restData.get(bone), rawFinger.normalize());
-            }
-          }
-        });
-      });
-    };
+    // Get absolute wrist pointing direction
+    const dx = -(handLm[9].x - handLm[0].x);
+    const dy = -(handLm[9].y - handLm[0].y);
+    const dz = -(handLm[9].z - handLm[0].z);
+    const wristDir = new THREE.Vector3(dx, dy, dz);
+    
+    if (wristDir.lengthSq() < 0.0001) return;
+    wristDir.normalize();
 
-    // APPLY MIRRORED HANDS
-    // User's physical RIGHT hand drives Avatar's LEFT hand
-    if (data.rightHandLandmarks) {
-      applyHandTracking(data.rightHandLandmarks, store.lHand, store.lFingers);
-    }
-    // User's physical LEFT hand drives Avatar's RIGHT hand
-    if (data.leftHandLandmarks) {
-      applyHandTracking(data.leftHandLandmarks, store.rHand, store.rFingers);
-    }
+    // FIX 1: BEND (Relative to Forearm)
+    // This prevents the hand from folding backward. We calculate the difference
+    // between the forearm and the hand, and apply ONLY that difference to the rest pose.
+    const bendQuat = new THREE.Quaternion().setFromUnitVectors(forearmDir, wristDir);
+    const handRest = restData.get(handBone)!;
+    const bentQuat = handRest.localQuat.clone().multiply(bendQuat);
+
+    // FIX 2: TWIST (Pronation / Supination)
+    // We calculate the Z-depth difference between the Pinky and Index knuckles.
+    // If the palm turns, one knuckle gets closer to the camera and the other moves away.
+    const dZ = handLm[17].z - handLm[5].z;
+    const dX = handLm[17].x - handLm[5].x;
+    const dY = handLm[17].y - handLm[5].y;
+    
+    const distXY = Math.hypot(dX, dY);
+    let twistAngle = Math.atan2(dZ, Math.max(0.01, distXY)) * 1.5; // 1.5 amplifies the twist visibility
+    
+    // Mirror the twist direction for the right arm
+    if (!isAvatarLeft) twistAngle = -twistAngle;
+
+    // Apply the twist around the local Y axis (Mixamo's bone length axis)
+    const twistQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), twistAngle);
+    const finalQuat = bentQuat.multiply(twistQuat);
+
+    targets.set(handBone, finalQuat);
+  };
+
+  // APPLY MIRRORED HANDS
+  // User's physical RIGHT hand drives Avatar's LEFT hand
+  if (data.rightHandLandmarks) {
+    applyHandTracking(data.rightHandLandmarks, store.lHand, true);
+  }
+  // User's physical LEFT hand drives Avatar's RIGHT hand
+  if (data.leftHandLandmarks) {
+    applyHandTracking(data.leftHandLandmarks, store.rHand, false);
+  }
 
  // ─── HEAD & NECK MATH (FIXED: COUNTER-STEER) ─────────────────────────
     if (isVis(imgLm[0]) && isVis(imgLm[7]) && isVis(imgLm[8])) {
