@@ -479,7 +479,7 @@ export default function AvatarScene() {
     let animFrameId: number;
 
     new GLTFLoader().load(
-      new URL("/male_patient_1.glb", window.location.origin).href,
+      new URL("/Astra.glb", window.location.origin).href,
       (gltf) => {
         const model = gltf.scene;
         model.scale.setScalar(0.1);
