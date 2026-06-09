@@ -133,9 +133,6 @@ function computeTargets(
   restData: Map<THREE.Bone, BoneRestData>
 ): Map<THREE.Bone, THREE.Quaternion> {
   const targets = new Map<THREE.Bone, THREE.Quaternion>();
-  const set = (bone: THREE.Bone | null, rest: BoneRestData | undefined, dir: THREE.Vector3) => {
-    if (bone && rest) targets.set(bone, computeAimTarget(bone, rest, dir));
-  };
 
   const imgLm = data.poseLandmarks;
   const wrldLm = (data.poseWorldLandmarks && data.poseWorldLandmarks.length > 0) 
@@ -154,115 +151,57 @@ function computeTargets(
     return dir.normalize();
   };
 
-  // --- 1. TORSO MATH (Locked Yaw & Lean) ---
-  let invTorsoQuat = new THREE.Quaternion();
-  if (store.spine && isVis(imgLm[11]) && isVis(imgLm[12])) {
-    const fullTorsoQuat = new THREE.Quaternion(); 
-    invTorsoQuat = new THREE.Quaternion();        
-
-    if (store.spine1) {
-      targets.set(store.spine,  restData.get(store.spine)!.localQuat.clone());
-      targets.set(store.spine1, restData.get(store.spine1)!.localQuat.clone());
-    } else {
-      targets.set(store.spine, restData.get(store.spine)!.localQuat.clone());
-    }
+  // --- 1. TORSO (locked to rest — torso twist/bend disabled) ---
+  // Torso twisting is disabled: noisy shoulder Z values cause the spine to
+  // rotate which drags the arms with it via invTorsoQuat.
+  const invTorsoQuat = new THREE.Quaternion(); // identity — no torso rotation
+  if (store.spine) {
+    targets.set(store.spine, restData.get(store.spine)!.localQuat.clone());
+    if (store.spine1) targets.set(store.spine1, restData.get(store.spine1)!.localQuat.clone());
   }
 
-  // --- 2. UNIFIED ARM & HAND CHAIN (With Muscle Twist) ---
+  // --- 2. UNIFIED ARM CHAIN ---
   const applyArmChain = (
-    sIdx: number, eIdx: number, wIdx: number, 
-    upper: THREE.Bone | null, fore: THREE.Bone | null, hand: THREE.Bone | null,
-    handLm: Landmark3D[] | undefined,
+    sIdx: number, eIdx: number, wIdx: number,
+    upper: THREE.Bone | null, fore: THREE.Bone | null,
     isL: boolean
   ) => {
     if (!isVis(imgLm[sIdx]) || !isVis(imgLm[eIdx]) || !upper) return;
 
-    // A. Point Upper Arm
-    const rU = getAnchorDir(eIdx, sIdx);
-    set(upper, restData.get(upper)!, rU);
+    // A. Upper arm: shoulder → elbow direction in body space
+    const rU_world = getAnchorDir(eIdx, sIdx);
+    const rU_body  = rU_world.clone().applyQuaternion(invTorsoQuat);
+    targets.set(upper, computeAimTarget(upper, restData.get(upper)!, rU_body));
 
     if (!fore || !isVis(imgLm[wIdx])) return;
 
-    // B. Point Forearm
-    const rF = getAnchorDir(wIdx, eIdx);
-    const upperSwing = new THREE.Quaternion().setFromUnitVectors(restData.get(upper)!.worldDir, rU);
-    const localFore = rF.clone().applyQuaternion(upperSwing.clone().invert());
-    
-    // CRITICAL FIX 1: Mirror the bending axes for the right arm.
-    // We invert Y and Z so the right elbow hinges in the correct mirrored direction.
-    // We leave X alone so the arm doesn't fold backward into its own shoulder.
-    if (!isL) { 
-      localFore.y = -localFore.y;
-      localFore.z = -localFore.z;
+    // B. Forearm: elbow → wrist direction, de-rotated by the upper arm swing
+    const rF_world = getAnchorDir(wIdx, eIdx);
+    const rF_body  = rF_world.clone().applyQuaternion(invTorsoQuat);
+
+    const upperSwing = new THREE.Quaternion().setFromUnitVectors(
+      restData.get(upper)!.worldDir, rU_body
+    );
+    const localFore = rF_body.clone().applyQuaternion(upperSwing.clone().invert());
+
+    if (isL) {
+      // Left arm: pass localFore directly — no axis correction needed
+      targets.set(fore, computeAimTarget(fore, restData.get(fore)!, localFore));
+    } else {
+      // Right arm: Mixamo right forearm bone has its axes mirrored vs the left.
+      // Negate all three components so the hinge folds outward (away from chest)
+      // instead of inward. This is stable across all arm positions.
+      const mirroredFore = new THREE.Vector3(-localFore.x, -localFore.y, -localFore.z);
+      targets.set(fore, computeAimTarget(fore, restData.get(fore)!, mirroredFore));
     }
-    
-    let finalForeQ = computeAimTarget(fore, restData.get(fore)!, localFore);
-    let finalHandQ = hand ? restData.get(hand)!.localQuat.clone() : new THREE.Quaternion();
-
-    // C. Point Hand & Apply Pronation/Supination Twist
-    if (hand && handLm) {
-      const oldForeQ = fore.quaternion.clone();
-      fore.quaternion.copy(finalForeQ);
-      fore.updateMatrixWorld(true);
-
-      // 1. Point Hand
-      const hx = -(handLm[9].x - handLm[0].x);
-      const hy = -(handLm[9].y - handLm[0].y);
-      const hz = -(handLm[9].z - handLm[0].z);
-      const axis = new THREE.Vector3(hx, hy, hz).normalize();
-      
-      finalHandQ = computeAimTarget(hand, restData.get(hand)!, axis);
-
-      fore.quaternion.copy(oldForeQ);
-      fore.updateMatrixWorld(true);
-
-      // 2. TRUE 3D Twist (Vector Projection Method)
-      const px = -(handLm[5].x - handLm[17].x);
-      const py = -(handLm[5].y - handLm[17].y);
-      const pz = -(handLm[5].z - handLm[17].z);
-      const palmWidth = new THREE.Vector3(px, py, pz).normalize();
-
-      const projectedPalm = palmWidth.clone().sub(axis.clone().multiplyScalar(palmWidth.dot(axis))).normalize();
-
-      let refVector = new THREE.Vector3(0, 1, 0);
-      refVector.sub(axis.clone().multiplyScalar(refVector.dot(axis)));
-      if (refVector.lengthSq() < 0.001) refVector.set(1, 0, 0); 
-      refVector.normalize();
-
-      const crossRef = new THREE.Vector3().crossVectors(axis, refVector);
-      
-      // We restore the negative sign so the muscles spin in the natural human direction
-      let twistAngle = -Math.atan2(projectedPalm.dot(crossRef), projectedPalm.dot(refVector));
-
-      // CRITICAL FIX 2: The Twist Axis must be X (bone length).
-      // Twisting on Y is what was causing the right elbow to wobble sideways.
-      const twistAxis = new THREE.Vector3(1, 0, 0); 
-      
-      // Cleaned baseline offsets
-      if (isL) {
-        twistAngle += Math.PI; // -180 deg to face palm correctly
-      } else {
-        twistAngle -= 0; // Natural mirroring handles the right side
-      }
-      
-      // 3. Muscle Split (60% forearm, 40% wrist)
-      const foreTwist = new THREE.Quaternion().setFromAxisAngle(twistAxis, twistAngle * 0.6);
-      const handTwist = new THREE.Quaternion().setFromAxisAngle(twistAxis, twistAngle * 0.4);
-
-      finalForeQ.multiply(foreTwist);
-      finalHandQ.multiply(handTwist);
-    }
-
-    targets.set(fore, finalForeQ);
-    if (hand) targets.set(hand, finalHandQ);
   };
 
-  // EXECUTE MIRROR MAPPING
-  // User's physical RIGHT hand (12,14,16) drives Avatar's LEFT arm
-  applyArmChain(12, 14, 16, store.lUpperArm, store.lForeArm, store.lHand, data.rightHandLandmarks, true);
+  // EXECUTE MAPPING
+  // User's physical RIGHT arm (12,14,16) drives Avatar's LEFT arm
+  applyArmChain(12, 14, 16, store.lUpperArm, store.lForeArm, true);
   
-  // User's physical LEFT hand (11,13,15) drives Avatar's RIGHT arm
-  applyArmChain(11, 13, 15, store.rUpperArm, store.rForeArm, store.rHand, data.leftHandLandmarks, false);
+  // User's physical LEFT arm (11,13,15) drives Avatar's RIGHT arm
+  applyArmChain(11, 13, 15, store.rUpperArm, store.rForeArm, false);
 
   // --- 3. HEAD & NECK MATH (Counter-Steer) ---
   if (isVis(imgLm[0]) && isVis(imgLm[7]) && isVis(imgLm[8])) {
@@ -276,6 +215,7 @@ function computeTargets(
       new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch * 1.2)
     ).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -roll * 0.8));
     
+    // The head automatically counter-steers against the torso movements in Body Space
     const masterHeadQuat = invTorsoQuat.clone().multiply(faceWorldQuat);
     const neckQuat = new THREE.Quaternion().slerp(masterHeadQuat, 0.4);
     const headQuat = masterHeadQuat.clone().multiply(neckQuat.clone().invert());
