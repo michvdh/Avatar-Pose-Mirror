@@ -130,7 +130,9 @@ const isVis = (lm: Landmark3D) => (lm.visibility ?? 1) >= 0.3;
 function computeTargets(
   data: HolisticResults,
   store: BoneStore,
-  restData: Map<THREE.Bone, BoneRestData>
+  restData: Map<THREE.Bone, BoneRestData>,
+  torsoAngles: { pitch: number; lean: number; yaw: number },
+  restSpanRef: { current: number | null }
 ): Map<THREE.Bone, THREE.Quaternion> {
   const targets = new Map<THREE.Bone, THREE.Quaternion>();
 
@@ -151,11 +153,113 @@ function computeTargets(
     return dir.normalize();
   };
 
-  // --- 1. TORSO (locked to rest — torso twist/bend disabled) ---
-  // Torso twisting is disabled: noisy shoulder Z values cause the spine to
-  // rotate which drags the arms with it via invTorsoQuat.
-  const invTorsoQuat = new THREE.Quaternion(); // identity — no torso rotation
-  if (store.spine) {
+  // ─── Human joint limits ───────────────────────────────────────────────────
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  const deg = THREE.MathUtils.degToRad;
+
+  // --- 1. TORSO MATH ---
+  // MediaPipe world landmarks: X right, Y DOWN, Z toward camera.
+  // So a standing person has head at negative Y, feet at positive Y.
+  //
+  // PITCH  (forward/back bend): spine vector (hip_mid → shoulder_mid) vs world up (0,-1,0).
+  //   When upright the spine vector is (0,-1,0). Bowing forward rotates it toward camera (+Z).
+  //   Limit: +45° forward, -20° backward.
+  //
+  // LATERAL LEAN (side bend): shoulder height difference (ls.y - rs.y) in MediaPipe Y-down space.
+  //   When you lean RIGHT (avatar left, mirrored), your right shoulder drops → rs.y increases,
+  //   so ls.y - rs.y becomes negative. Deadband ±2cm. Limit: ±30°.
+  //
+  // YAW (axial twist): shoulder X-span narrows when twisting. Calibrate rest span on
+  //   first frame to avoid phantom twist from camera distance variation. Limit: ±40°.
+  //   Large deadband (5°) so standing still never fires.
+  //
+  // All three angles are smoothed with a tight EMA (α=0.08) before use,
+  // independent of the per-bone slerp smoothing in the render loop.
+
+  let invTorsoQuat = new THREE.Quaternion();
+  let fullTorsoQuat = new THREE.Quaternion();
+
+  const lsVis = (wrldLm[11]?.visibility ?? 1) >= 0.5;
+  const rsVis = (wrldLm[12]?.visibility ?? 1) >= 0.5;
+  const lhVis = (wrldLm[23]?.visibility ?? 1) >= 0.4;
+  const rhVis = (wrldLm[24]?.visibility ?? 1) >= 0.4;
+
+  const TORSO_ALPHA = 0.08; // tight smoothing for torso — reduces jitter
+
+  if (store.spine && lsVis && rsVis) {
+    const ls = wrldLm[11], rs = wrldLm[12];
+
+    // ── PITCH ──────────────────────────────────────────────────────────────
+    // Spine direction in Y-down space: from hip midpoint to shoulder midpoint.
+    // Upright = (0, -1, 0). Bowing forward tilts toward +Z.
+    let rawPitch = 0;
+    if (lhVis && rhVis) {
+      const hipMid = new THREE.Vector3(
+        (wrldLm[23].x + wrldLm[24].x) / 2,
+        (wrldLm[23].y + wrldLm[24].y) / 2,
+        (wrldLm[23].z + wrldLm[24].z) / 2,
+      );
+      const shoulderMid = new THREE.Vector3(
+        (ls.x + rs.x) / 2,
+        (ls.y + rs.y) / 2,
+        (ls.z + rs.z) / 2,
+      );
+      // Spine vector points FROM hips TO shoulders (upward = negative Y in MP space)
+      const spineVec = new THREE.Vector3().subVectors(shoulderMid, hipMid).normalize();
+      // World up in MediaPipe = (0, -1, 0). Angle from that is the total tilt.
+      // We only want the forward/back component: use spineVec.z (depth).
+      // Positive spineVec.z = shoulders forward = bow forward.
+      rawPitch = clamp(Math.asin(clamp(spineVec.z, -1, 1)), -deg(20), deg(45));
+    }
+    torsoAngles.pitch += TORSO_ALPHA * (rawPitch - torsoAngles.pitch);
+
+    // ── LATERAL LEAN ───────────────────────────────────────────────────────
+    // In Y-down space, leaning left raises left shoulder (ls.y more negative).
+    // ls.y - rs.y: negative when leaning left (avatar leans its left = our right).
+    // Deadband ±2 cm to absorb head-turn leakage.
+    const LEAN_DEAD = 0.02;
+    const rawDY = ls.y - rs.y;
+    const rawLean = Math.abs(rawDY) < LEAN_DEAD ? 0
+      : clamp(-rawDY * 3.0, -deg(30), deg(30)); // negate: Y-down → right-hand rule
+    torsoAngles.lean += TORSO_ALPHA * (rawLean - torsoAngles.lean);
+
+    // ── YAW ────────────────────────────────────────────────────────────────
+    // Calibrate rest span on the first valid frame so camera distance doesn't matter.
+    const spanX = Math.abs(ls.x - rs.x);
+    if (restSpanRef.current === null) restSpanRef.current = spanX;
+    const restSpan = restSpanRef.current;
+
+    const spanRatio  = Math.min(spanX / restSpan, 1.0);
+    const rawYawMag  = Math.acos(spanRatio); // 0 when at rest, grows as you twist
+    // Sign from Z: in MP space, if left shoulder is closer (ls.z > rs.z) → twisting right
+    const yawSign    = (ls.z - rs.z) > 0 ? -1 : 1; // mirrored camera
+    // Large deadband (5°) — only fire yaw for deliberate twists
+    const rawYaw     = rawYawMag < deg(5) ? 0
+      : clamp(yawSign * rawYawMag, -deg(40), deg(40));
+    torsoAngles.yaw += TORSO_ALPHA * (rawYaw - torsoAngles.yaw);
+
+    // ── AXIS TEST ────────────────────────────────────────────────────────────
+    // Drive a sine wave lean on each axis in turn (5s per axis) so we can see
+    // visually which one produces a sideways bend on Astra's rig.
+    // X=0-5s, Y=5-10s, Z=10-15s, then repeats. Check browser console for label.
+    const t = (Date.now() / 1000) % 15;
+    const wave = Math.sin(Date.now() / 800) * deg(25);
+    let testAxis: THREE.Vector3;
+    if (t < 5)       { testAxis = new THREE.Vector3(1, 0, 0); if (Math.floor(t) !== Math.floor(t - 0.016)) console.log('[AXIS TEST] LOCAL X'); }
+    else if (t < 10) { testAxis = new THREE.Vector3(0, 1, 0); if (Math.floor(t) !== Math.floor(t - 0.016)) console.log('[AXIS TEST] LOCAL Y'); }
+    else             { testAxis = new THREE.Vector3(0, 0, 1); if (Math.floor(t) !== Math.floor(t - 0.016)) console.log('[AXIS TEST] LOCAL Z'); }
+
+    const testQ = new THREE.Quaternion().setFromAxisAngle(testAxis, wave);
+    // Try both pre and post multiply to cover all cases
+    const preQ  = testQ.clone().multiply(restData.get(store.spine)!.localQuat);
+    const postQ = restData.get(store.spine)!.localQuat.clone().multiply(testQ);
+    // Use pre for spine, post for spine1 — compare which looks right
+    targets.set(store.spine,  preQ);
+    if (store.spine1) targets.set(store.spine1, postQ);
+
+    fullTorsoQuat = new THREE.Quaternion();
+    invTorsoQuat  = new THREE.Quaternion();
+  } else if (store.spine) {
     targets.set(store.spine, restData.get(store.spine)!.localQuat.clone());
     if (store.spine1) targets.set(store.spine1, restData.get(store.spine1)!.localQuat.clone());
   }
@@ -203,20 +307,48 @@ function computeTargets(
   // User's physical LEFT arm (11,13,15) drives Avatar's RIGHT arm
   applyArmChain(11, 13, 15, store.rUpperArm, store.rForeArm, false);
 
-  // --- 3. HEAD & NECK MATH (Counter-Steer) ---
+  // --- 3. HEAD & NECK MATH ---
+  // Head angles are computed in world space, then multiplied by invTorsoQuat
+  // to express them relative to the torso. This means: if the torso yaws 20°
+  // and the head stays still in the world, the avatar's head counter-steers
+  // 20° back — keeping it upright. Only genuine head movement adds rotation.
   if (isVis(imgLm[0]) && isVis(imgLm[7]) && isVis(imgLm[8])) {
     const noseW = wrldLm[0], earLW = wrldLm[7], earRW = wrldLm[8];
-    const pitch = Math.atan2(noseW.y - (earLW.y + earRW.y) / 2, 0.2);
-    const yaw = -Math.atan2(earLW.z - earRW.z, Math.max(0.01, Math.abs(earRW.x - earLW.x)));
-    const roll = Math.atan2(earRW.y - earLW.y, Math.max(0.01, Math.abs(earRW.x - earLW.x)));
 
-    const faceWorldQuat = new THREE.Quaternion().multiplyQuaternions(
-      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw * 0.8), 
-      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch * 1.2)
-    ).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -roll * 0.8));
-    
-    // The head automatically counter-steers against the torso movements in Body Space
+    // Pitch: nose above/below ear midpoint
+    const pitch = clamp(
+      Math.atan2(noseW.y - (earLW.y + earRW.y) / 2, 0.2),
+      -deg(30), deg(40)
+    );
+
+    // Yaw: ear Z depth difference — when head turns one ear comes forward.
+    // Deadband ±2° so torso twist noise doesn't leak into head yaw.
+    const earDZ  = earLW.z - earRW.z;
+    const earDX  = Math.max(0.01, Math.abs(earRW.x - earLW.x));
+    const rawYaw = -Math.atan2(earDZ, earDX);
+    const yaw    = clamp(
+      Math.abs(rawYaw) < deg(2) ? 0 : rawYaw,
+      -deg(70), deg(70)
+    );
+
+    // Roll: ear height difference
+    const roll = clamp(
+      Math.atan2(earRW.y - earLW.y, earDX),
+      -deg(30), deg(30)
+    );
+
+    // Build world-space head quaternion
+    const faceWorldQuat = new THREE.Quaternion()
+      .multiplyQuaternions(
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw   * 0.85),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch * 1.1)
+      )
+      .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -roll * 0.8));
+
+    // Convert to torso-relative space — this is the counter-steer
     const masterHeadQuat = invTorsoQuat.clone().multiply(faceWorldQuat);
+
+    // Distribute: neck takes 40%, head takes the remainder
     const neckQuat = new THREE.Quaternion().slerp(masterHeadQuat, 0.4);
     const headQuat = masterHeadQuat.clone().multiply(neckQuat.clone().invert());
 
@@ -250,6 +382,10 @@ export default function AvatarScene() {
   const restDataRef = useRef<Map<THREE.Bone, BoneRestData>>(new Map());
   const smoothedRef = useRef<Map<THREE.Bone, THREE.Quaternion>>(new Map());
   const fingerRestMapRef = useRef<Map<THREE.Bone, THREE.Quaternion>>(new Map());
+  // Per-frame smoothed torso angles — prevents jitter from raw landmark noise
+  const torsoAnglesRef = useRef({ pitch: 0, lean: 0, yaw: 0 });
+  // Calibrated shoulder span (set on first valid frame, used for yaw detection)
+  const restShoulderSpanRef = useRef<number | null>(null);
 
   useMediaPipeHolistic(
     videoRef,
@@ -366,7 +502,11 @@ export default function AvatarScene() {
         }
         (store.root.parent ?? store.root).updateMatrixWorld(true);
 
-        const targets = computeTargets(data, store, restData);
+        const targets = computeTargets(
+          data, store, restData,
+          torsoAnglesRef.current,
+          restShoulderSpanRef
+        );
 
         for (const [bone, target] of targets) {
           const sm = smoothed.get(bone);
