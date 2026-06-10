@@ -158,66 +158,53 @@ function computeTargets(
   const deg = THREE.MathUtils.degToRad;
 
   // --- 1. TORSO MATH ---
-  // MediaPipe world landmarks: X right, Y DOWN, Z toward camera.
-  // So a standing person has head at negative Y, feet at positive Y.
-  //
-  // PITCH  (forward/back bend): spine vector (hip_mid → shoulder_mid) vs world up (0,-1,0).
-  //   When upright the spine vector is (0,-1,0). Bowing forward rotates it toward camera (+Z).
-  //   Limit: +45° forward, -20° backward.
-  //
-  // LATERAL LEAN (side bend): shoulder height difference (ls.y - rs.y) in MediaPipe Y-down space.
-  //   When you lean RIGHT (avatar left, mirrored), your right shoulder drops → rs.y increases,
-  //   so ls.y - rs.y becomes negative. Deadband ±2cm. Limit: ±30°.
-  //
-  // YAW (axial twist): shoulder X-span narrows when twisting. Calibrate rest span on
-  //   first frame to avoid phantom twist from camera distance variation. Limit: ±40°.
-  //   Large deadband (5°) so standing still never fires.
-  //
-  // All three angles are smoothed with a tight EMA (α=0.08) before use,
-  // independent of the per-bone slerp smoothing in the render loop.
-
-  let invTorsoQuat = new THREE.Quaternion(); // identity — not applied to arms until torso is stable
+  let invTorsoQuat = new THREE.Quaternion();
   let fullTorsoQuat = new THREE.Quaternion();
 
   const lsVis = (wrldLm[11]?.visibility ?? 1) >= 0.5;
   const rsVis = (wrldLm[12]?.visibility ?? 1) >= 0.5;
-  const lhVis = (wrldLm[23]?.visibility ?? 1) >= 0.4;
-  const rhVis = (wrldLm[24]?.visibility ?? 1) >= 0.4;
 
   const TORSO_ALPHA = 0.12;
 
-  if (store.spine && lsVis && rsVis && lhVis && rhVis) {
-    const ls = wrldLm[11], rs = wrldLm[12], lh = wrldLm[23], rh = wrldLm[24];
+  // -- DEBUG LOGGER (Runs once per second) --
+  if (!(window as any).lastLogTime) (window as any).lastLogTime = 0;
+  const now = Date.now();
+  const shouldLog = now - (window as any).lastLogTime > 1000;
+  if (shouldLog) (window as any).lastLogTime = now;
 
-    // 1. Calculate the center midpoints for the spine vector
-    const shoulderMidX = (ls.x + rs.x) * 0.5;
-    const shoulderMidY = (ls.y + rs.y) * 0.5;
-    const hipMidX = (lh.x + rh.x) * 0.5;
-    const hipMidY = (lh.y + rh.y) * 0.5;
+  if (store.spine && lsVis && rsVis) {
+    const ls = wrldLm[11], rs = wrldLm[12];
 
-    // 2. Calculate the lateral shift (dx) and vertical height (dy)
-    const dx = shoulderMidX - hipMidX;
-    // MediaPipe Y is down, so the hips have a higher Y value than the shoulders
-    const dy = hipMidY - shoulderMidY; 
+    // 1. Calculate the tilt of the shoulders 
+    // dy is the height difference between the left and right shoulder
+    const dy = rs.y - ls.y; 
+    // dx is the horizontal width between the shoulders
+    const dx = Math.abs(rs.x - ls.x);
 
-    // 3. Get the true biomechanical angle of the spine in radians
-    let rawLeanAngle = Math.atan2(dx, Math.max(0.1, dy));
+    // 2. Get the angle (0 degrees when shoulders are perfectly level)
+    let rawLeanAngle = Math.atan2(dy, Math.max(0.01, dx));
+    
+    // 3. Apply the Astra axis convention
+    rawLeanAngle = -rawLeanAngle; 
 
-    // 4. Apply the confirmed axis sign convention for the Astra model
-    rawLeanAngle = -rawLeanAngle;
-
-    // 5. Apply a tight deadband to absorb standing sway, and a wide clamp for deep bends
+    // 4. Apply deadband and scale it up slightly for responsiveness
     const LEAN_DEAD = deg(3);
-    const rawLean = Math.abs(rawLeanAngle) < LEAN_DEAD ? 0
-      : clamp(rawLeanAngle * 1.1, -deg(50), deg(50));
+    const rawLean = Math.abs(rawLeanAngle) < LEAN_DEAD ? 0 : clamp(rawLeanAngle * 1.2, -deg(60), deg(60));
 
     torsoAngles.lean  += TORSO_ALPHA * (rawLean  - torsoAngles.lean);
-    torsoAngles.pitch += TORSO_ALPHA * (0        - torsoAngles.pitch); // Keep pitch 0 for now
-    torsoAngles.yaw   += TORSO_ALPHA * (0        - torsoAngles.yaw);   // Keep yaw 0 for now
+    torsoAngles.pitch += TORSO_ALPHA * (0        - torsoAngles.pitch); 
+    torsoAngles.yaw   += TORSO_ALPHA * (0        - torsoAngles.yaw);   
 
-    // ── BUILD & APPLY ─────────────────────────────────────────────────────
+    // --- LOG OUTPUT ---
+    if (shouldLog) {
+      console.log("=== SHOULDER TILT DEBUG ===");
+      console.log(`Raw Shoulder Tilt: ${(rawLeanAngle * 180 / Math.PI).toFixed(2)}°`);
+      console.log(`Final Applied Lean: ${(torsoAngles.lean * 180 / Math.PI).toFixed(2)}°`);
+    }
+
+    // 5. Build and apply the bend using the correct Z-axis (0, 0, 1)
     const halfLean = new THREE.Quaternion().setFromAxisAngle(
-      new THREE.Vector3(0, 1, 0), torsoAngles.lean * 0.5
+      new THREE.Vector3(0, 0, 1), torsoAngles.lean * 0.5
     );
     
     targets.set(store.spine,  restData.get(store.spine)!.localQuat.clone().multiply(halfLean));
@@ -229,6 +216,8 @@ function computeTargets(
     invTorsoQuat  = new THREE.Quaternion();
 
   } else if (store.spine) {
+    if (shouldLog) console.log("=== BEND DEBUG === Fallback hit! Shoulders not visible.");
+    
     torsoAngles.lean  += TORSO_ALPHA * (0 - torsoAngles.lean);
     torsoAngles.pitch += TORSO_ALPHA * (0 - torsoAngles.pitch);
     torsoAngles.yaw   += TORSO_ALPHA * (0 - torsoAngles.yaw);
