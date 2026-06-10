@@ -176,7 +176,7 @@ function computeTargets(
   // All three angles are smoothed with a tight EMA (α=0.08) before use,
   // independent of the per-bone slerp smoothing in the render loop.
 
-  let invTorsoQuat = new THREE.Quaternion();
+  let invTorsoQuat = new THREE.Quaternion(); // identity — not applied to arms until torso is stable
   let fullTorsoQuat = new THREE.Quaternion();
 
   const lsVis = (wrldLm[11]?.visibility ?? 1) >= 0.5;
@@ -184,82 +184,54 @@ function computeTargets(
   const lhVis = (wrldLm[23]?.visibility ?? 1) >= 0.4;
   const rhVis = (wrldLm[24]?.visibility ?? 1) >= 0.4;
 
-  const TORSO_ALPHA = 0.08; // tight smoothing for torso — reduces jitter
+  const TORSO_ALPHA = 0.12;
 
-  if (store.spine && lsVis && rsVis) {
-    const ls = wrldLm[11], rs = wrldLm[12];
+  if (store.spine && lsVis && rsVis && lhVis && rhVis) {
+    const ls = wrldLm[11], rs = wrldLm[12], lh = wrldLm[23], rh = wrldLm[24];
 
-    // ── PITCH ──────────────────────────────────────────────────────────────
-    // Spine direction in Y-down space: from hip midpoint to shoulder midpoint.
-    // Upright = (0, -1, 0). Bowing forward tilts toward +Z.
-    let rawPitch = 0;
-    if (lhVis && rhVis) {
-      const hipMid = new THREE.Vector3(
-        (wrldLm[23].x + wrldLm[24].x) / 2,
-        (wrldLm[23].y + wrldLm[24].y) / 2,
-        (wrldLm[23].z + wrldLm[24].z) / 2,
-      );
-      const shoulderMid = new THREE.Vector3(
-        (ls.x + rs.x) / 2,
-        (ls.y + rs.y) / 2,
-        (ls.z + rs.z) / 2,
-      );
-      // Spine vector points FROM hips TO shoulders (upward = negative Y in MP space)
-      const spineVec = new THREE.Vector3().subVectors(shoulderMid, hipMid).normalize();
-      // World up in MediaPipe = (0, -1, 0). Angle from that is the total tilt.
-      // We only want the forward/back component: use spineVec.z (depth).
-      // Positive spineVec.z = shoulders forward = bow forward.
-      rawPitch = clamp(Math.asin(clamp(spineVec.z, -1, 1)), -deg(20), deg(45));
+    // 1. Calculate the center midpoints for the spine vector
+    const shoulderMidX = (ls.x + rs.x) * 0.5;
+    const shoulderMidY = (ls.y + rs.y) * 0.5;
+    const hipMidX = (lh.x + rh.x) * 0.5;
+    const hipMidY = (lh.y + rh.y) * 0.5;
+
+    // 2. Calculate the lateral shift (dx) and vertical height (dy)
+    const dx = shoulderMidX - hipMidX;
+    // MediaPipe Y is down, so the hips have a higher Y value than the shoulders
+    const dy = hipMidY - shoulderMidY; 
+
+    // 3. Get the true biomechanical angle of the spine in radians
+    let rawLeanAngle = Math.atan2(dx, Math.max(0.1, dy));
+
+    // 4. Apply the confirmed axis sign convention for the Astra model
+    rawLeanAngle = -rawLeanAngle;
+
+    // 5. Apply a tight deadband to absorb standing sway, and a wide clamp for deep bends
+    const LEAN_DEAD = deg(3);
+    const rawLean = Math.abs(rawLeanAngle) < LEAN_DEAD ? 0
+      : clamp(rawLeanAngle * 1.1, -deg(50), deg(50));
+
+    torsoAngles.lean  += TORSO_ALPHA * (rawLean  - torsoAngles.lean);
+    torsoAngles.pitch += TORSO_ALPHA * (0        - torsoAngles.pitch); // Keep pitch 0 for now
+    torsoAngles.yaw   += TORSO_ALPHA * (0        - torsoAngles.yaw);   // Keep yaw 0 for now
+
+    // ── BUILD & APPLY ─────────────────────────────────────────────────────
+    const halfLean = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0), torsoAngles.lean * 0.5
+    );
+    
+    targets.set(store.spine,  restData.get(store.spine)!.localQuat.clone().multiply(halfLean));
+    if (store.spine1) {
+      targets.set(store.spine1, restData.get(store.spine1)!.localQuat.clone().multiply(halfLean));
     }
-    torsoAngles.pitch += TORSO_ALPHA * (rawPitch - torsoAngles.pitch);
-
-    // ── LATERAL LEAN ───────────────────────────────────────────────────────
-    // In Y-down space, leaning left raises left shoulder (ls.y more negative).
-    // ls.y - rs.y: negative when leaning left (avatar leans its left = our right).
-    // Deadband ±2 cm to absorb head-turn leakage.
-    const LEAN_DEAD = 0.02;
-    const rawDY = ls.y - rs.y;
-    const rawLean = Math.abs(rawDY) < LEAN_DEAD ? 0
-      : clamp(-rawDY * 3.0, -deg(30), deg(30)); // negate: Y-down → right-hand rule
-    torsoAngles.lean += TORSO_ALPHA * (rawLean - torsoAngles.lean);
-
-    // ── YAW ────────────────────────────────────────────────────────────────
-    // Calibrate rest span on the first valid frame so camera distance doesn't matter.
-    const spanX = Math.abs(ls.x - rs.x);
-    if (restSpanRef.current === null) restSpanRef.current = spanX;
-    const restSpan = restSpanRef.current;
-
-    const spanRatio  = Math.min(spanX / restSpan, 1.0);
-    const rawYawMag  = Math.acos(spanRatio); // 0 when at rest, grows as you twist
-    // Sign from Z: in MP space, if left shoulder is closer (ls.z > rs.z) → twisting right
-    const yawSign    = (ls.z - rs.z) > 0 ? -1 : 1; // mirrored camera
-    // Large deadband (5°) — only fire yaw for deliberate twists
-    const rawYaw     = rawYawMag < deg(5) ? 0
-      : clamp(yawSign * rawYawMag, -deg(40), deg(40));
-    torsoAngles.yaw += TORSO_ALPHA * (rawYaw - torsoAngles.yaw);
-
-    // ── AXIS TEST ────────────────────────────────────────────────────────────
-    // Drive a sine wave lean on each axis in turn (5s per axis) so we can see
-    // visually which one produces a sideways bend on Astra's rig.
-    // X=0-5s, Y=5-10s, Z=10-15s, then repeats. Check browser console for label.
-    const t = (Date.now() / 1000) % 15;
-    const wave = Math.sin(Date.now() / 800) * deg(25);
-    let testAxis: THREE.Vector3;
-    if (t < 5)       { testAxis = new THREE.Vector3(1, 0, 0); if (Math.floor(t) !== Math.floor(t - 0.016)) console.log('[AXIS TEST] LOCAL X'); }
-    else if (t < 10) { testAxis = new THREE.Vector3(0, 1, 0); if (Math.floor(t) !== Math.floor(t - 0.016)) console.log('[AXIS TEST] LOCAL Y'); }
-    else             { testAxis = new THREE.Vector3(0, 0, 1); if (Math.floor(t) !== Math.floor(t - 0.016)) console.log('[AXIS TEST] LOCAL Z'); }
-
-    const testQ = new THREE.Quaternion().setFromAxisAngle(testAxis, wave);
-    // Try both pre and post multiply to cover all cases
-    const preQ  = testQ.clone().multiply(restData.get(store.spine)!.localQuat);
-    const postQ = restData.get(store.spine)!.localQuat.clone().multiply(testQ);
-    // Use pre for spine, post for spine1 — compare which looks right
-    targets.set(store.spine,  preQ);
-    if (store.spine1) targets.set(store.spine1, postQ);
 
     fullTorsoQuat = new THREE.Quaternion();
     invTorsoQuat  = new THREE.Quaternion();
+
   } else if (store.spine) {
+    torsoAngles.lean  += TORSO_ALPHA * (0 - torsoAngles.lean);
+    torsoAngles.pitch += TORSO_ALPHA * (0 - torsoAngles.pitch);
+    torsoAngles.yaw   += TORSO_ALPHA * (0 - torsoAngles.yaw);
     targets.set(store.spine, restData.get(store.spine)!.localQuat.clone());
     if (store.spine1) targets.set(store.spine1, restData.get(store.spine1)!.localQuat.clone());
   }
