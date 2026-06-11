@@ -49,25 +49,18 @@ function buildBoneStore(root: THREE.Object3D): BoneStore {
   const store: BoneStore = {
     root,
     hips:   fb([["pelvis"], ["hips"], ["hip"]]),
-    // spine: "spine01" catches CC_Base; plain "spine" relies on DFS (parent
-    // visited before children) to find Spine before Spine1/Spine2 on Mixamo.
     spine:  fb([["spine01"], ["spine"], ["torso"]]),
     spine1: fb([["spine02"], ["spine1"], ["spine2"], ["chest"], ["upperchest"]]),
     neck:   fb([["neck"], ["neck01"]]),
     head:   fb([["head"]]),
-    // "leftshoulder"/"rightshoulder" catches Mixamo LeftShoulder/RightShoulder.
     lShoulder: fb([["lclavicle"], ["claviclel"], ["leftshoulder"], ["lshoulder"], ["leftclavicle"]]),
     rShoulder: fb([["rclavicle"], ["clavicler"], ["rightshoulder"], ["rshoulder"], ["rightclavicle"]]),
-    // "leftarm"/"rightarm" catches Mixamo LeftArm/RightArm (not LeftForeArm since
-    // "leftarm" is not a substring of "leftforearm").
     lUpperArm: fb([["lupperarm"], ["upperarml"], ["leftupperarm"], ["leftarm"]]),
     lForeArm:  fb([["lforearm"],  ["lowerarml"], ["leftforearm"]]),
     lHand:     fb([["lhand"],     ["handl"],      ["lefthand"]]),
     rUpperArm: fb([["rupperarm"], ["upperarmr"], ["rightupperarm"], ["rightarm"]]),
     rForeArm:  fb([["rforearm"],  ["lowerarmr"], ["rightforearm"]]),
     rHand:     fb([["rhand"],     ["handr"],      ["righthand"]]),
-    // "leftupleg"/"rightupleg" catches Mixamo LeftUpLeg/RightUpLeg.
-    // "leftleg"/"rightleg" catches Mixamo LeftLeg/RightLeg (knee-to-ankle).
     lThigh: fb([["lthigh"], ["thighl"], ["leftthigh"], ["lupleg"], ["leftupleg"]]),
     rThigh: fb([["rthigh"], ["thighr"], ["rightthigh"], ["rupleg"], ["rightupleg"]]),
     lCalf:  fb([["lcalf"],  ["calfl"],  ["leftcalf"],  ["lleg"],  ["leftleg"]]),
@@ -250,40 +243,25 @@ function computeTargets(
     const localFore = rF_body.clone().applyQuaternion(upperSwing.clone().invert());
 
     if (isL) {
-      // Left arm: pass localFore directly — no axis correction needed
       targets.set(fore, computeAimTarget(fore, restData.get(fore)!, localFore));
     } else {
-      // Right arm: Mixamo right forearm bone has its axes mirrored vs the left.
-      // Negate all three components so the hinge folds outward (away from chest)
-      // instead of inward. This is stable across all arm positions.
       const mirroredFore = new THREE.Vector3(-localFore.x, -localFore.y, -localFore.z);
       targets.set(fore, computeAimTarget(fore, restData.get(fore)!, mirroredFore));
     }
   };
 
-  // EXECUTE MAPPING
-  // User's physical RIGHT arm (12,14,16) drives Avatar's LEFT arm
   applyArmChain(12, 14, 16, store.lUpperArm, store.lForeArm, true);
-  
-  // User's physical LEFT arm (11,13,15) drives Avatar's RIGHT arm
   applyArmChain(11, 13, 15, store.rUpperArm, store.rForeArm, false);
 
   // --- 3. HEAD & NECK MATH ---
-  // Head angles are computed in world space, then multiplied by invTorsoQuat
-  // to express them relative to the torso. This means: if the torso yaws 20°
-  // and the head stays still in the world, the avatar's head counter-steers
-  // 20° back — keeping it upright. Only genuine head movement adds rotation.
   if (isVis(imgLm[0]) && isVis(imgLm[7]) && isVis(imgLm[8])) {
     const noseW = wrldLm[0], earLW = wrldLm[7], earRW = wrldLm[8];
 
-    // Pitch: nose above/below ear midpoint
     const pitch = clamp(
       Math.atan2(noseW.y - (earLW.y + earRW.y) / 2, 0.2),
       -deg(30), deg(40)
     );
 
-    // Yaw: ear Z depth difference — when head turns one ear comes forward.
-    // Deadband ±2° so torso twist noise doesn't leak into head yaw.
     const earDZ  = earLW.z - earRW.z;
     const earDX  = Math.max(0.01, Math.abs(earRW.x - earLW.x));
     const rawYaw = -Math.atan2(earDZ, earDX);
@@ -292,13 +270,11 @@ function computeTargets(
       -deg(70), deg(70)
     );
 
-    // Roll: ear height difference
     const roll = clamp(
       Math.atan2(earRW.y - earLW.y, earDX),
       -deg(30), deg(30)
     );
 
-    // Build world-space head quaternion
     const faceWorldQuat = new THREE.Quaternion()
       .multiplyQuaternions(
         new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw   * 0.85),
@@ -306,10 +282,8 @@ function computeTargets(
       )
       .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -roll * 0.8));
 
-    // Convert to torso-relative space — this is the counter-steer
     const masterHeadQuat = invTorsoQuat.clone().multiply(faceWorldQuat);
 
-    // Distribute: neck takes 40%, head takes the remainder
     const neckQuat = new THREE.Quaternion().slerp(masterHeadQuat, 0.4);
     const headQuat = masterHeadQuat.clone().multiply(neckQuat.clone().invert());
 
@@ -327,9 +301,12 @@ const ALPHA_BODY = 0.14;
 export default function AvatarScene() {
   const mountRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  
   const [status, setStatus] = useState("Initializing…");
   const [showSkeleton, setShowSkeleton] = useState(true);
+  const [showCamera, setShowCamera] = useState(true); // NEW STATE FOR CAMERA
   const [bgColor, setBgColor] = useState<"#000000" | "#ffffff">("#000000");
+  
   const bgColorRef = useRef<"#000000" | "#ffffff">("#000000");
   const sceneRef = useRef<THREE.Scene | null>(null);
 
@@ -343,9 +320,7 @@ export default function AvatarScene() {
   const restDataRef = useRef<Map<THREE.Bone, BoneRestData>>(new Map());
   const smoothedRef = useRef<Map<THREE.Bone, THREE.Quaternion>>(new Map());
   const fingerRestMapRef = useRef<Map<THREE.Bone, THREE.Quaternion>>(new Map());
-  // Per-frame smoothed torso angles — prevents jitter from raw landmark noise
   const torsoAnglesRef = useRef({ pitch: 0, lean: 0, yaw: 0 });
-  // Calibrated shoulder span (set on first valid frame, used for yaw detection)
   const restShoulderSpanRef = useRef<number | null>(null);
 
   useMediaPipeHolistic(
@@ -380,11 +355,54 @@ export default function AvatarScene() {
     mountEl.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(bgColorRef.current);
+    
+    // 1. Set a deep space/cyberpunk background color and add depth fog
+    const deepBlue = "#050a15";
+    scene.background = new THREE.Color(deepBlue);
+    scene.fog = new THREE.FogExp2(deepBlue, 0.05); // Fades the grid out in the distance
     sceneRef.current = scene;
+    
     const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 100);
     camera.position.set(0, 1.5, 2.5);
     camera.lookAt(0, 1, 0);
+
+    // --- 3D GRID WORLD SETUP ---
+    const size = 3; // How far the grid stretches
+    const divisions = 30; // How many squares make up the grid
+    const colorCenterLine = new THREE.Color(0x114488); // Brighter cyan for main axes
+    const colorGrid = new THREE.Color(0x114488); // Darker blue for the grid squares
+
+    const gridGroup = new THREE.Group();
+
+    // Floor
+    const floorGrid = new THREE.GridHelper(size, divisions, colorCenterLine, colorGrid);
+    gridGroup.add(floorGrid);
+
+    // Back Wall
+    const backGrid = new THREE.GridHelper(size, divisions, colorCenterLine, colorGrid);
+    backGrid.rotation.x = Math.PI / 2;
+    backGrid.position.z = -size / 2;
+    backGrid.position.y = size / 2;
+    gridGroup.add(backGrid);
+
+    // Left Wall
+    const leftGrid = new THREE.GridHelper(size, divisions, colorCenterLine, colorGrid);
+    leftGrid.rotation.z = Math.PI / 2;
+    leftGrid.position.x = -size / 2;
+    leftGrid.position.y = size / 2;
+    gridGroup.add(leftGrid);
+
+    // Right Wall
+    const rightGrid = new THREE.GridHelper(size, divisions, colorCenterLine, colorGrid);
+    rightGrid.rotation.z = Math.PI / 2;
+    rightGrid.position.x = size / 2;
+    rightGrid.position.y = size / 2;
+    gridGroup.add(rightGrid);
+
+    scene.add(gridGroup);
+    // ---------------------------
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.55));
     const dir = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -417,8 +435,6 @@ export default function AvatarScene() {
         model.updateMatrixWorld(true);
         const restData = captureRestData(store);
 
-        // Collect every finger bone (children of lHand / rHand) and snapshot
-        // their rest quaternions so we can pin them to rest every frame.
         const fingerRestMap = new Map<THREE.Bone, THREE.Quaternion>();
         const collectFingers = (handBone: THREE.Bone | null) => {
           if (!handBone) return;
@@ -473,12 +489,7 @@ export default function AvatarScene() {
           const sm = smoothed.get(bone);
           if (!sm) continue;
 
-          // --- ADAPTIVE SMOOTHING ---
-          // Calculate the angular distance between current smoothed pose and target
           const angleDist = sm.angleTo(target);
-          
-          // If the distance is large, boost the ALPHA to 0.4 (High speed)
-          // If the distance is small, use 0.1 (Smooth slow movement)
           const dynamicAlpha = THREE.MathUtils.clamp(angleDist * 2, 0.1, 0.4);
 
           slerpBone(bone, sm, target, dynamicAlpha);
@@ -487,7 +498,6 @@ export default function AvatarScene() {
           if (!targets.has(bone)) bone.quaternion.copy(sm);
         }
 
-        // Pin all finger bones to their rest pose — no finger tracking active.
         for (const [bone, restQ] of fingerRestMapRef.current) {
           bone.quaternion.copy(restQ);
         }
@@ -536,6 +546,10 @@ export default function AvatarScene() {
           width: 200, height: 150, objectFit: "cover",
           transform: "scaleX(-1)", borderRadius: 8,
           border: "2px solid rgba(0,255,136,0.4)", zIndex: 10,
+          // Use opacity instead of display: none to ensure MediaPipe still gets frames
+          opacity: showCamera ? 1 : 0, 
+          pointerEvents: showCamera ? "auto" : "none",
+          transition: "opacity 0.2s ease-in-out",
         }}
       />
 
@@ -571,6 +585,23 @@ export default function AvatarScene() {
         }}
       >
         {bgColor === "#ffffff" ? "bg: white" : "bg: black"}
+      </button>
+
+      {/* NEW BUTTON FOR CAMERA TOGGLE */}
+      <button
+        onClick={() => setShowCamera((v) => !v)}
+        style={{
+          position: "fixed", bottom: 12, right: 480,
+          fontFamily: "monospace", fontSize: 12,
+          color: showCamera ? "#00ff88" : "#888",
+          background: "rgba(0,0,0,0.6)",
+          border: `1px solid ${showCamera ? "rgba(0,255,136,0.5)" : "rgba(128,128,128,0.4)"}`,
+          borderRadius: 4, padding: "4px 10px",
+          cursor: "pointer", zIndex: 12,
+          transition: "color 0.15s, border-color 0.15s",
+        }}
+      >
+        {showCamera ? "camera on" : "camera off"}
       </button>
     </div>
   );
