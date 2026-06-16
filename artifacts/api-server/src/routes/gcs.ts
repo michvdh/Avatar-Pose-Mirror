@@ -13,7 +13,8 @@ function getStorage(): Storage {
 function getBucketName(): string {
   const bucket = process.env["GCS_BUCKET"];
   if (!bucket) throw new Error("GCS_BUCKET environment variable is not set");
-  return bucket;
+  // Strip accidental gs:// prefix and surrounding whitespace
+  return bucket.trim().replace(/^gs:\/\//, "").replace(/\/$/, "");
 }
 
 router.get("/exercises", async (_req, res) => {
@@ -40,8 +41,10 @@ router.get("/exercises", async (_req, res) => {
 
     res.json(exercises);
   } catch (err: unknown) {
+    const bucketName = process.env["GCS_BUCKET"]?.trim().replace(/^gs:\/\//, "").replace(/\/$/, "") ?? "(unset)";
+    console.error("[GCS /exercises] bucket=%s error=%s", bucketName, err instanceof Error ? err.stack : String(err));
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: message, bucket: bucketName });
   }
 });
 
