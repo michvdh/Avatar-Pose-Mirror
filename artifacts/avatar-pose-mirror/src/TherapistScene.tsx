@@ -118,6 +118,19 @@ export default function TherapistScene({ objectPath, onReady, active = true }: P
   const activeRef = useRef(active);
   useEffect(() => { activeRef.current = active; }, [active]);
 
+  // When play is pressed: rewind video to the very start, then ensure it's playing
+  const prevActiveRef = useRef(active);
+  useEffect(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl) return;
+    const justStarted = active && !prevActiveRef.current;
+    prevActiveRef.current = active;
+    if (justStarted) {
+      videoEl.currentTime = 0;
+      videoEl.play().catch(() => {});
+    }
+  }, [active]);
+
   useEffect(() => {
     const mountEl = mountRef.current;
     const videoEl = videoRef.current;
