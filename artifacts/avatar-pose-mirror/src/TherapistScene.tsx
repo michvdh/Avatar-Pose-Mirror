@@ -259,8 +259,8 @@ export default function TherapistScene({ objectPath, onReady, active = true }: P
       if (stopped) return;
       animFrameId = requestAnimationFrame(renderLoop);
 
+      // Always send frames so the ready signal can fire — active only gates animation
       if (
-        activeRef.current &&
         poseInstance &&
         (videoEl?.readyState ?? 0) >= 2 &&
         !videoEl?.paused &&
@@ -278,7 +278,7 @@ export default function TherapistScene({ objectPath, onReady, active = true }: P
       const smoothed = smoothedRef.current;
       const data     = poseResultRef.current;
 
-      if (store && data?.poseLandmarks && data?.poseWorldLandmarks) {
+      if (activeRef.current && store && data?.poseLandmarks && data?.poseWorldLandmarks) {
         const lm  = data.poseLandmarks  as Lm3[];
         const wlm = data.poseWorldLandmarks as Lm3[];
         const deg    = THREE.MathUtils.degToRad;

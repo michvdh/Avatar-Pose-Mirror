@@ -241,7 +241,7 @@ function LoadingOverlay({
           width: 280,
         }}
       >
-        <StatusRow label="Avatar Astra" ready={astraReady} />
+        <StatusRow label="Astra" ready={astraReady} />
         <StatusRow label="Dr. Suzie" ready={suzieReady} />
       </div>
 
