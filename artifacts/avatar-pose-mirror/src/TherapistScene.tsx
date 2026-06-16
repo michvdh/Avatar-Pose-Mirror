@@ -143,34 +143,25 @@ function computeTargets(
     if (store.spine1) targets.set(store.spine1, restData.get(store.spine1)!.localQuat.clone());
   }
 
-  // ── Arm chains (direct mapping: video-left → Suzie-left) ─────────────────
+  // ── Arm chains (direct aim — avoids elbow-inward artefact on raised arms) ──
   const applyArm = (
     sIdx: number, eIdx: number, wIdx: number,
     upper: THREE.Bone | null, fore: THREE.Bone | null,
-    isLeft: boolean
   ) => {
     if (!upper || !isVis(poseLm[sIdx]) || !isVis(poseLm[eIdx])) return;
     const rU = wDir(eIdx, sIdx).applyQuaternion(invTorsoQ);
     targets.set(upper, computeAimTarget(upper, restData.get(upper)!, rU));
 
     if (!fore || !isVis(poseLm[wIdx])) return;
+    // Aim the forearm directly in world-space — no swing decomposition needed
     const rF = wDir(wIdx, eIdx).applyQuaternion(invTorsoQ);
-    const upperSwing = new THREE.Quaternion().setFromUnitVectors(
-      restData.get(upper)!.worldDir, rU
-    );
-    const localFore = rF.clone().applyQuaternion(upperSwing.clone().invert());
-    if (!isLeft) {
-      localFore.x = -localFore.x;
-      localFore.y = -localFore.y;
-      localFore.z = -localFore.z;
-    }
-    targets.set(fore, computeAimTarget(fore, restData.get(fore)!, localFore));
+    targets.set(fore, computeAimTarget(fore, restData.get(fore)!, rF));
   };
 
   // video left (11,13,15) → Suzie left arm
-  applyArm(11, 13, 15, store.lUpperArm, store.lForeArm, true);
+  applyArm(11, 13, 15, store.lUpperArm, store.lForeArm);
   // video right (12,14,16) → Suzie right arm
-  applyArm(12, 14, 16, store.rUpperArm, store.rForeArm, false);
+  applyArm(12, 14, 16, store.rUpperArm, store.rForeArm);
 
   // ── Head & neck ───────────────────────────────────────────────────────────
   if (isVis(poseLm[0]) && isVis(poseLm[7]) && isVis(poseLm[8])) {
@@ -272,17 +263,16 @@ export default function TherapistScene({ objectPath }: { objectPath: string }) {
     camera.position.set(0, 1.5, 2.5);
     camera.lookAt(0, 1, 0);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    scene.add(new THREE.AmbientLight(0xffffff, 1.4));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
     dirLight.position.set(0.5, 2, 2);
     scene.add(dirLight);
-    const backLight = new THREE.DirectionalLight(0x8899ff, 0.3);
+    const fillLight = new THREE.DirectionalLight(0xddeeff, 1.2);
+    fillLight.position.set(0, 1, 3);
+    scene.add(fillLight);
+    const backLight = new THREE.DirectionalLight(0x8899ff, 0.5);
     backLight.position.set(-1, 0.5, -1);
     scene.add(backLight);
-
-    const gridColor = new THREE.Color(0x114488);
-    const grid = new THREE.GridHelper(3, 20, gridColor, gridColor);
-    scene.add(grid);
 
     // ── Bone state ──────────────────────────────────────────────────────────
     const boneStoreRef  = { current: null as BoneStore | null };

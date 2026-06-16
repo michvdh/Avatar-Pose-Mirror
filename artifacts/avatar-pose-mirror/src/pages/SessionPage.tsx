@@ -20,7 +20,7 @@ export default function SessionPage() {
           top: 24,
           left: 24,
           width: 280,
-          bottom: 24,
+          height: "clamp(400px, 62vh, 560px)",
           zIndex: 20,
           borderRadius: 12,
           overflow: "hidden",
