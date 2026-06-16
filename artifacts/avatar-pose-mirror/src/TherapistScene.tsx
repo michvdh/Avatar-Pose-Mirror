@@ -104,10 +104,19 @@ function loadPoseCDN(): Promise<new (opts: object) => any> {
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export default function TherapistScene({ objectPath }: { objectPath: string }) {
+interface Props {
+  objectPath: string;
+  onReady?: () => void;
+  active?: boolean;
+}
+
+export default function TherapistScene({ objectPath, onReady, active = true }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState("Loading…");
+  // Keep a stable ref to active so the render loop always sees the latest value
+  const activeRef = useRef(active);
+  useEffect(() => { activeRef.current = active; }, [active]);
 
   useEffect(() => {
     const mountEl = mountRef.current;
@@ -118,6 +127,17 @@ export default function TherapistScene({ objectPath }: { objectPath: string }) {
     let animFrameId: number;
     let sendingFrame = false;
     let poseInstance: any = null;
+
+    // Two-stage ready gate: fire onReady only when BOTH FBX and first pose are done
+    let fbxLoaded = false;
+    let firstPoseDone = false;
+    let onReadyFired = false;
+    const maybeFireReady = () => {
+      if (!onReadyFired && fbxLoaded && firstPoseDone) {
+        onReadyFired = true;
+        onReady?.();
+      }
+    };
 
     // ── Three.js ────────────────────────────────────────────────────────────
     let renderer: THREE.WebGLRenderer;
@@ -192,6 +212,8 @@ export default function TherapistScene({ objectPath }: { objectPath: string }) {
         boneStoreRef.current = store;
         restDataRef.current  = restData;
         smoothedRef.current  = smoothed;
+        fbxLoaded = true;
+        maybeFireReady();
         setStatus("Loading pose model…");
       },
       undefined,
@@ -221,6 +243,10 @@ export default function TherapistScene({ objectPath }: { objectPath: string }) {
         pose.onResults((results: any) => {
           if (results.poseLandmarks && results.poseWorldLandmarks) {
             poseResultRef.current = results;
+            if (!firstPoseDone) {
+              firstPoseDone = true;
+              maybeFireReady();
+            }
           }
         });
         poseInstance = pose;
@@ -234,6 +260,7 @@ export default function TherapistScene({ objectPath }: { objectPath: string }) {
       animFrameId = requestAnimationFrame(renderLoop);
 
       if (
+        activeRef.current &&
         poseInstance &&
         (videoEl?.readyState ?? 0) >= 2 &&
         !videoEl?.paused &&

@@ -1,4 +1,5 @@
 import { useSearch, useLocation } from "wouter";
+import { useState, useEffect, useRef } from "react";
 import AvatarScene from "../AvatarScene";
 import TherapistScene from "../TherapistScene";
 
@@ -8,9 +9,53 @@ export default function SessionPage() {
   const params = new URLSearchParams(search);
   const objectPath = params.get("exercise") ?? "";
 
+  const [suzieReady, setSuzieReady] = useState(false);
+  const [astraReady, setAstraReady] = useState(false);
+  const bothReady = suzieReady && astraReady;
+
+  // Fade-out state: once both ready, animate the overlay away then unmount it
+  const [overlayVisible, setOverlayVisible] = useState(true);
+  const [overlayOpacity, setOverlayOpacity] = useState(1);
+
+  useEffect(() => {
+    if (bothReady) {
+      // Trigger CSS fade-out
+      setOverlayOpacity(0);
+      // Remove from DOM after transition completes
+      const t = setTimeout(() => setOverlayVisible(false), 700);
+      return () => clearTimeout(t);
+    }
+  }, [bothReady]);
+
+  // Detect AvatarScene (Astra) readiness by intercepting getUserMedia.
+  // When the camera stream is obtained, MediaPipe still needs ~3 s to
+  // initialise its WASM + models, so we fire astraReady after that delay.
+  const astraFiredRef = useRef(false);
+  useEffect(() => {
+    const original = navigator.mediaDevices.getUserMedia.bind(
+      navigator.mediaDevices
+    );
+    (navigator.mediaDevices as any).getUserMedia = async function (
+      constraints: MediaStreamConstraints
+    ) {
+      const stream = await original(constraints);
+      if (!astraFiredRef.current) {
+        astraFiredRef.current = true;
+        // Give MediaPipe Holistic time to finish WASM init + first inference
+        setTimeout(() => setAstraReady(true), 3500);
+      }
+      return stream;
+    };
+    return () => {
+      navigator.mediaDevices.getUserMedia = original;
+    };
+  }, []);
+
   return (
-    <div style={{ width: "100vw", height: "100vh", overflow: "hidden", position: "relative" }}>
-      {/* Full-screen patient avatar (unchanged) */}
+    <div
+      style={{ width: "100vw", height: "100vh", overflow: "hidden", position: "relative" }}
+    >
+      {/* Full-screen patient avatar (AvatarScene — not modified) */}
       <AvatarScene />
 
       {/* Therapist panel — fixed left overlay */}
@@ -26,7 +71,8 @@ export default function SessionPage() {
           overflow: "hidden",
           background: "rgba(8, 28, 70, 0.82)",
           border: "1px solid rgba(0, 136, 255, 0.35)",
-          boxShadow: "0 0 32px rgba(0, 100, 255, 0.15), inset 0 0 20px rgba(0, 80, 200, 0.06)",
+          boxShadow:
+            "0 0 32px rgba(0, 100, 255, 0.15), inset 0 0 20px rgba(0, 80, 200, 0.06)",
           backdropFilter: "blur(4px)",
           display: "flex",
           flexDirection: "column",
@@ -68,7 +114,11 @@ export default function SessionPage() {
         {/* Three.js subscene fills remaining space */}
         <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
           {objectPath ? (
-            <TherapistScene objectPath={objectPath} />
+            <TherapistScene
+              objectPath={objectPath}
+              onReady={() => setSuzieReady(true)}
+              active={bothReady}
+            />
           ) : (
             <div
               style={{
@@ -107,11 +157,186 @@ export default function SessionPage() {
           zIndex: 30,
           transition: "border-color 0.15s",
         }}
-        onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(0,255,136,0.8)"; }}
-        onMouseLeave={(e) => { e.currentTarget.style.borderColor = "rgba(0,255,136,0.4)"; }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = "rgba(0,255,136,0.8)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = "rgba(0,255,136,0.4)";
+        }}
       >
         ← Home
       </button>
+
+      {/* Loading overlay — unmounted after fade-out completes */}
+      {overlayVisible && (
+        <LoadingOverlay
+          suzieReady={suzieReady}
+          astraReady={astraReady}
+          opacity={overlayOpacity}
+        />
+      )}
     </div>
+  );
+}
+
+// ─── Loading overlay ────────────────────────────────────────────────────────
+
+function LoadingOverlay({
+  suzieReady,
+  astraReady,
+  opacity,
+}: {
+  suzieReady: boolean;
+  astraReady: boolean;
+  opacity: number;
+}) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 100,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(5, 10, 21, 0.92)",
+        backdropFilter: "blur(8px)",
+        opacity,
+        transition: "opacity 0.65s ease",
+        fontFamily: "monospace",
+      }}
+    >
+      {/* Title */}
+      <div
+        style={{
+          color: "#00aaff",
+          fontSize: 11,
+          letterSpacing: "0.35em",
+          textTransform: "uppercase",
+          marginBottom: 8,
+          opacity: 0.7,
+        }}
+      >
+        Initialising Session
+      </div>
+      <div
+        style={{
+          color: "#e8f4ff",
+          fontSize: 22,
+          fontWeight: 700,
+          letterSpacing: "0.04em",
+          marginBottom: 48,
+        }}
+      >
+        Home Physical Therapy Guide
+      </div>
+
+      {/* Status rows */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 20,
+          width: 280,
+        }}
+      >
+        <StatusRow label="Avatar Astra" ready={astraReady} />
+        <StatusRow label="Dr. Suzie" ready={suzieReady} />
+      </div>
+
+      {/* Hint */}
+      <div
+        style={{
+          marginTop: 40,
+          color: "#4a6a88",
+          fontSize: 11,
+          letterSpacing: "0.08em",
+        }}
+      >
+        {suzieReady && astraReady
+          ? "Starting…"
+          : "Please allow camera access if prompted"}
+      </div>
+    </div>
+  );
+}
+
+function StatusRow({ label, ready }: { label: string; ready: boolean }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: "rgba(8, 28, 70, 0.6)",
+        border: `1px solid ${ready ? "rgba(0,255,136,0.4)" : "rgba(0,136,255,0.25)"}`,
+        borderRadius: 8,
+        padding: "12px 16px",
+        transition: "border-color 0.4s ease",
+      }}
+    >
+      <div style={{ color: "#c8e8ff", fontSize: 13, fontWeight: 600 }}>
+        {label}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {ready ? (
+          <>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+            >
+              <circle cx="8" cy="8" r="7" stroke="#00ff88" strokeWidth="1.5" />
+              <path
+                d="M5 8.5l2 2 4-4"
+                stroke="#00ff88"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <span style={{ color: "#00ff88", fontSize: 11, letterSpacing: "0.1em" }}>
+              READY
+            </span>
+          </>
+        ) : (
+          <>
+            <Spinner />
+            <span style={{ color: "#00aaff", fontSize: 11, letterSpacing: "0.1em" }}>
+              LOADING
+            </span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      style={{ animation: "spin 1s linear infinite" }}
+    >
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <circle
+        cx="8"
+        cy="8"
+        r="6"
+        stroke="rgba(0,136,255,0.25)"
+        strokeWidth="2"
+      />
+      <path
+        d="M8 2a6 6 0 0 1 6 6"
+        stroke="#00aaff"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
