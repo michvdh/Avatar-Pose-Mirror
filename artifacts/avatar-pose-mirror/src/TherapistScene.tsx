@@ -332,26 +332,40 @@ export default function TherapistScene({ objectPath, onReady, active = true }: P
         // Propagate spine change before computing arms
         worldRoot.updateMatrixWorld(true);
 
-        // ── 2. Arms — apply upper arm first, update world matrix, then forearm
-        //    This is the key fix: forearm's computeAimTarget reads the PARENT's
-        //    current world quaternion, so the upper arm must be applied first.
+        // ── 2. Arms ───────────────────────────────────────────────────────────
+        // Mirrors AvatarScene exactly:
+        //   • Raw world-space directions (no invTorsoQ — AvatarScene uses identity)
+        //   • Same landmark→bone mapping (12,14,16 → lUpperArm; 11,13,15 → rUpperArm)
+        //   • Swing decomposition for forearm + right-arm negation for bone axis fix
+        //   • upper.updateMatrixWorld(true) before forearm so parent quat is current
         const applyArm = (
           sIdx: number, eIdx: number, wIdx: number,
           upper: THREE.Bone | null, fore: THREE.Bone | null,
+          isL: boolean,
         ) => {
           if (!upper || !isVis(lm[sIdx]) || !isVis(lm[eIdx])) return;
-          const rU = wDir(eIdx, sIdx).applyQuaternion(invTorsoQ);
+          const rU = wDir(eIdx, sIdx); // raw world direction, no torso correction
           smooth(upper, computeAimTarget(upper, restData.get(upper)!, rU));
-          // Update world matrix of upper arm so forearm gets correct parent quat
           upper.updateMatrixWorld(true);
 
           if (!fore || !isVis(lm[wIdx])) return;
-          const rF = wDir(wIdx, eIdx).applyQuaternion(invTorsoQ);
-          smooth(fore, computeAimTarget(fore, restData.get(fore)!, rF));
+          const rF = wDir(wIdx, eIdx);
+          // Swing decomposition (same as AvatarScene)
+          const upperSwing = new THREE.Quaternion().setFromUnitVectors(
+            restData.get(upper)!.worldDir, rU
+          );
+          const localFore = rF.clone().applyQuaternion(upperSwing.clone().invert());
+          if (isL) {
+            smooth(fore, computeAimTarget(fore, restData.get(fore)!, localFore));
+          } else {
+            const mirroredFore = new THREE.Vector3(-localFore.x, -localFore.y, -localFore.z);
+            smooth(fore, computeAimTarget(fore, restData.get(fore)!, mirroredFore));
+          }
         };
 
-        applyArm(11, 13, 15, store.lUpperArm, store.lForeArm);
-        applyArm(12, 14, 16, store.rUpperArm, store.rForeArm);
+        // Same mapping as AvatarScene: 12→lUpperArm, 11→rUpperArm
+        applyArm(12, 14, 16, store.lUpperArm, store.lForeArm, true);
+        applyArm(11, 13, 15, store.rUpperArm, store.rForeArm, false);
         worldRoot.updateMatrixWorld(true);
 
         // ── 3. Head & neck ────────────────────────────────────────────────────

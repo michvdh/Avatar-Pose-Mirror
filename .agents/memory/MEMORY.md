@@ -1,0 +1,1 @@
+- [Arm pose mapping conventions](arm-pose-mapping.md) — landmark→bone mapping, swing decomp, axis negation for correct TherapistScene arms
