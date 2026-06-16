@@ -12,6 +12,7 @@ export default function SessionPage() {
   const [suzieReady, setSuzieReady] = useState(false);
   const [astraReady, setAstraReady] = useState(false);
   const bothReady = suzieReady && astraReady;
+  const [playing, setPlaying] = useState(false);
 
   // Fade-out state: once both ready, animate the overlay away then unmount it
   const [overlayVisible, setOverlayVisible] = useState(true);
@@ -114,11 +115,75 @@ export default function SessionPage() {
         {/* Three.js subscene fills remaining space */}
         <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
           {objectPath ? (
-            <TherapistScene
-              objectPath={objectPath}
-              onReady={() => setSuzieReady(true)}
-              active={bothReady}
-            />
+            <>
+              <TherapistScene
+                objectPath={objectPath}
+                onReady={() => setSuzieReady(true)}
+                active={bothReady && playing}
+              />
+              {/* Play button — shown after loading, before first play */}
+              {bothReady && !playing && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 12,
+                    background: "rgba(4, 14, 38, 0.55)",
+                    backdropFilter: "blur(2px)",
+                    zIndex: 10,
+                  }}
+                >
+                  <button
+                    onClick={() => setPlaying(true)}
+                    style={{
+                      width: 64,
+                      height: 64,
+                      borderRadius: "50%",
+                      border: "2px solid rgba(0,170,255,0.7)",
+                      background: "rgba(0,60,140,0.75)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      boxShadow: "0 0 24px rgba(0,136,255,0.35)",
+                      transition: "transform 0.15s, box-shadow 0.15s, border-color 0.15s",
+                    }}
+                    onMouseEnter={(e) => {
+                      const el = e.currentTarget;
+                      el.style.transform = "scale(1.1)";
+                      el.style.boxShadow = "0 0 36px rgba(0,170,255,0.55)";
+                      el.style.borderColor = "rgba(0,200,255,1)";
+                    }}
+                    onMouseLeave={(e) => {
+                      const el = e.currentTarget;
+                      el.style.transform = "scale(1)";
+                      el.style.boxShadow = "0 0 24px rgba(0,136,255,0.35)";
+                      el.style.borderColor = "rgba(0,170,255,0.7)";
+                    }}
+                  >
+                    {/* Play triangle */}
+                    <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                      <polygon points="7,4 19,11 7,18" fill="#00aaff" />
+                    </svg>
+                  </button>
+                  <span
+                    style={{
+                      color: "#7ab8d8",
+                      fontFamily: "monospace",
+                      fontSize: 11,
+                      letterSpacing: "0.15em",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Start Guide
+                  </span>
+                </div>
+              )}
+            </>
           ) : (
             <div
               style={{
