@@ -90,7 +90,7 @@ export default function HomePage() {
             margin: 0,
           }}
         >
-          Avatar Pose Mirror
+          Home Physical Therapy Guide
         </h1>
       </div>
 

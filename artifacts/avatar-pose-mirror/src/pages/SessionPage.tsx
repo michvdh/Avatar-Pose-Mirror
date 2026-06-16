@@ -17,7 +17,7 @@ export default function SessionPage() {
       <div
         style={{
           position: "fixed",
-          top: 24,
+          top: 68,
           left: 24,
           width: 280,
           height: "clamp(400px, 62vh, 560px)",
