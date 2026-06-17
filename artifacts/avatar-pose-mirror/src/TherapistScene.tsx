@@ -145,9 +145,14 @@ export default function TherapistScene({ objectPath, onReady, active = true }: P
     let fbxLoaded = false;
     let firstPoseDone = false;
     let onReadyFired = false;
+    let needsPauseFrame = false; // send one extra frame while paused to freeze on frame-0 pose
     const maybeFireReady = () => {
       if (!onReadyFired && fbxLoaded && firstPoseDone) {
         onReadyFired = true;
+        // Freeze video at frame 0 so Suzie previews the starting pose, not T-pose
+        videoEl.currentTime = 0;
+        videoEl.pause();
+        needsPauseFrame = true;
         onReady?.();
       }
     };
@@ -272,13 +277,15 @@ export default function TherapistScene({ objectPath, onReady, active = true }: P
       if (stopped) return;
       animFrameId = requestAnimationFrame(renderLoop);
 
-      // Always send frames so the ready signal can fire — active only gates animation
+      // Send frames while playing, OR one extra frame after pausing at frame-0
+      const canSendPaused = needsPauseFrame && (videoEl?.readyState ?? 0) >= 2;
       if (
         poseInstance &&
         (videoEl?.readyState ?? 0) >= 2 &&
-        !videoEl?.paused &&
+        (!videoEl?.paused || canSendPaused) &&
         !sendingFrame
       ) {
+        if (canSendPaused) needsPauseFrame = false;
         sendingFrame = true;
         poseInstance
           .send({ image: videoEl })
@@ -291,7 +298,7 @@ export default function TherapistScene({ objectPath, onReady, active = true }: P
       const smoothed = smoothedRef.current;
       const data     = poseResultRef.current;
 
-      if (activeRef.current && store && data?.poseLandmarks && data?.poseWorldLandmarks) {
+      if (store && data?.poseLandmarks && data?.poseWorldLandmarks) {
         const lm  = data.poseLandmarks  as Lm3[];
         const wlm = data.poseWorldLandmarks as Lm3[];
         const deg    = THREE.MathUtils.degToRad;
