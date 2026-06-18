@@ -304,8 +304,6 @@ export default function PoseFeedbackOverlay({
         height:        "100%",
         pointerEvents: "none",
         zIndex:        16,
-        // Mirror to match Astra's mirrored webcam display (same as SkeletonOverlay)
-        transform:     "scaleX(-1)",
       }}
     />
   );
