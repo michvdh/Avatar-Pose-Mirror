@@ -47,3 +47,7 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Local dev env files (contain secrets — never commit)
+.env.local
+.env.*.local
