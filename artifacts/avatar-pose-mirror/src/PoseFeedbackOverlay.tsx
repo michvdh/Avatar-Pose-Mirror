@@ -20,6 +20,9 @@ const JOINTS: JointDef[] = [
   { id: "rWrist", anchorIdx: 14, jointIdx: 16 },
 ];
 
+// Landmarks to always show a pulsing dot on (shoulders, elbows, wrists)
+const BODY_DOT_INDICES = [11, 12, 13, 14, 15, 16];
+
 const OFF_TARGET_DEG = 25;   // show indicator when angular error exceeds this
 const ALIGNED_DEG    = 10;   // trigger success when error drops below this
 const FADE_MS        = 900;  // checkmark fade-out duration (ms)
@@ -181,6 +184,19 @@ export default function PoseFeedbackOverlay({
       const W = canvas!.width;
       const H = canvas!.height;
       ctx.clearRect(0, 0, W, H);
+
+      // ── Always-on body joint dots (shoulders / elbows / wrists) ──────────
+      const patientNow = patientDataRef.current;
+      if (patientNow?.poseLandmarks) {
+        const pi    = patientNow.poseLandmarks;
+        const phase = (performance.now() / 600) % 1;
+        for (const idx of BODY_DOT_INDICES) {
+          const lm = pi[idx] as Lm2 | undefined;
+          if (lm && (lm.visibility ?? 1) >= MIN_VIS) {
+            drawPulsingDot(ctx, { x: lm.x * W, y: lm.y * H }, phase);
+          }
+        }
+      }
 
       // ── diagnostics every ~2s ──────────────────────────────────────────────
       if (dbgTick % 120 === 1) {
