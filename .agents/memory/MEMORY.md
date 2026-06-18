@@ -1,1 +1,3 @@
 - [Therapist_Suzie FBX asset](therapist-suzie-fbx.md) — must be in public/ folder; it's not in git and gets lost on branch switches.
+- [Holistic arm visibility gating](holistic-arm-vis.md) — arms-at-sides have MediaPipe visibility 0.05-0.30; isVis threshold 0.3 is intentional, not a bug.
+- [Bone suffix matching for dots](bone-suffix-matching.md) — use endsWith() after stripping non-letters to find dot bones; avoids findBone/buildBoneStore substring false-matches.

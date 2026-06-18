@@ -159,12 +159,6 @@ function computeTargets(
 
   const TORSO_ALPHA = 0.12;
 
-  // -- DEBUG LOGGER (Runs once per second) --
-  if (!(window as any).lastLogTime) (window as any).lastLogTime = 0;
-  const now = Date.now();
-  const shouldLog = now - (window as any).lastLogTime > 1000;
-  if (shouldLog) (window as any).lastLogTime = now;
-
   if (store.spine && lsVis && rsVis) {
     const ls = wrldLm[11], rs = wrldLm[12];
 
@@ -188,13 +182,6 @@ function computeTargets(
     torsoAngles.pitch += TORSO_ALPHA * (0        - torsoAngles.pitch); 
     torsoAngles.yaw   += TORSO_ALPHA * (0        - torsoAngles.yaw);   
 
-    // --- LOG OUTPUT ---
-    if (shouldLog) {
-      console.log("=== SHOULDER TILT DEBUG ===");
-      console.log(`Raw Shoulder Tilt: ${(rawLeanAngle * 180 / Math.PI).toFixed(2)}°`);
-      console.log(`Final Applied Lean: ${(torsoAngles.lean * 180 / Math.PI).toFixed(2)}°`);
-    }
-
     // 5. Build and apply the bend using the correct Z-axis (0, 0, 1)
     const halfLean = new THREE.Quaternion().setFromAxisAngle(
       new THREE.Vector3(0, 0, 1), torsoAngles.lean * 0.5
@@ -209,8 +196,6 @@ function computeTargets(
     invTorsoQuat  = new THREE.Quaternion();
 
   } else if (store.spine) {
-    if (shouldLog) console.log("=== BEND DEBUG === Fallback hit! Shoulders not visible.");
-    
     torsoAngles.lean  += TORSO_ALPHA * (0 - torsoAngles.lean);
     torsoAngles.pitch += TORSO_ALPHA * (0 - torsoAngles.pitch);
     torsoAngles.yaw   += TORSO_ALPHA * (0 - torsoAngles.yaw);
