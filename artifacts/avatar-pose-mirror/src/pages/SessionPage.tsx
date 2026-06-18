@@ -69,7 +69,7 @@ export default function SessionPage() {
       <PoseFeedbackOverlay
         therapistDataRef={therapistDataRef}
         patientDataRef={patientDataRef}
-        active={bothReady && playing}
+        active={bothReady}
       />
 
       {/* Therapist panel — fixed left overlay */}

@@ -170,9 +170,11 @@ export default function PoseFeedbackOverlay({
     );
 
     let frameId: number;
+    let dbgTick = 0;
 
     function frame() {
       frameId = requestAnimationFrame(frame);
+      dbgTick++;
 
       const ctx = canvas!.getContext("2d");
       if (!ctx) return;
@@ -180,18 +182,29 @@ export default function PoseFeedbackOverlay({
       const H = canvas!.height;
       ctx.clearRect(0, 0, W, H);
 
+      // ── diagnostics every ~2s ──────────────────────────────────────────────
+      if (dbgTick % 120 === 1) {
+        const th = therapistDataRef.current;
+        const pt = patientDataRef.current;
+        console.log(
+          "[Overlay] active=%s  therapist=%s  patient=%s",
+          activeRef.current,
+          th ? `world[${th.world?.length}] image[${th.image?.length}]` : "null",
+          pt ? `world[${pt.poseWorldLandmarks?.length}] img[${pt.poseLandmarks?.length}]` : "null",
+        );
+      }
+
       if (!activeRef.current) return;
 
       const therapist = therapistDataRef.current;
       const patient   = patientDataRef.current;
-      if (
-        !therapist?.world || !therapist?.image ||
-        !patient?.poseWorldLandmarks || !patient?.poseLandmarks
-      ) return;
+      // Use poseLandmarks (screen-space x,y with z-depth) for BOTH therapist
+      // and patient — holistic does not emit poseWorldLandmarks, so we avoid
+      // any world-landmark dependency here.
+      if (!therapist?.image || !patient?.poseLandmarks) return;
 
-      const tw  = therapist.world as Lm3[];
-      const pw  = patient.poseWorldLandmarks as Lm3[];
-      const pi  = patient.poseLandmarks      as Lm2[];
+      const ti  = therapist.image as Lm3[];   // therapist poseLandmarks (screen+z)
+      const pi  = patient.poseLandmarks as Lm3[];  // patient  poseLandmarks (screen+z)
       const now = performance.now();
 
       for (const joint of JOINTS) {
@@ -200,16 +213,16 @@ export default function PoseFeedbackOverlay({
 
         // ── Visibility ───────────────────────────────────────────────────────
         const vis = (l: Lm3 | undefined) => (l?.visibility ?? 1) >= MIN_VIS;
-        if (!vis(tw[anchorIdx]) || !vis(tw[jointIdx]) ||
-            !vis(pw[anchorIdx]) || !vis(pw[jointIdx])) {
+        if (!vis(ti[anchorIdx]) || !vis(ti[jointIdx]) ||
+            !vis(pi[anchorIdx]) || !vis(pi[jointIdx])) {
           state.status    = "hidden";
           state.smoothErr = 0;
           continue;
         }
 
-        // ── Angular error in 3-D world space ─────────────────────────────────
-        const thDir  = norm3(sub3(tw[jointIdx], tw[anchorIdx]));
-        const ptDir  = norm3(sub3(pw[jointIdx], pw[anchorIdx]));
+        // ── Angular error in screen-space (x,y,z where z≈depth) ──────────────
+        const thDir  = norm3(sub3(ti[jointIdx], ti[anchorIdx]));
+        const ptDir  = norm3(sub3(pi[jointIdx], pi[anchorIdx]));
         const errDeg = angleDeg(thDir, ptDir);
         state.smoothErr += SMOOTH_ALPHA * (errDeg - state.smoothErr);
 
@@ -251,12 +264,12 @@ export default function PoseFeedbackOverlay({
           ptJointPx.y - ptAnchorPx.y,
         ));
 
-        // Target position = patient's anchor + therapist world-dir → image space.
-        // MediaPipe world: X+ = person's left = image X+  (right of frame)
-        //                  Y+ = up             = image Y-  (top of frame)
+        // Target position = patient's anchor + therapist screen-dir scaled to
+        // patient's limb length. Both coords are in poseLandmarks space where
+        // x+ = right, y+ = down, so no axis flip needed.
         const targetPx: Pt = {
           x: ptAnchorPx.x + thDir.x * limbLen,
-          y: ptAnchorPx.y - thDir.y * limbLen,
+          y: ptAnchorPx.y + thDir.y * limbLen,
         };
 
         // ── Draw ─────────────────────────────────────────────────────────────
