@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import {
   findBone,
   captureArmRestData,
@@ -203,17 +203,17 @@ export default function TherapistScene({ objectPath, onReady, active = true, onP
     const poseResultRef = { current: null as { poseLandmarks: Lm3[]; poseWorldLandmarks: Lm3[] } | null };
     const torsoAngles   = { lean: 0 };
 
-    // ── Load Suzie FBX ──────────────────────────────────────────────────────
+    // ── Load Suzie GLB ──────────────────────────────────────────────────────
     setStatus("Loading Suzie…");
-    new FBXLoader().load(
-      new URL("/Therapist_Suzie.fbx", window.location.origin).href,
-      (fbx) => {
+    new GLTFLoader().load(
+      new URL("/avatar.glb", window.location.origin).href,
+      (gltf) => {
         if (stopped) return;
-        fbx.scale.setScalar(0.01);
-        scene.add(fbx);
-        fbx.updateMatrixWorld(true);
+        const model = gltf.scene;
+        scene.add(model);
+        model.updateMatrixWorld(true);
 
-        const box    = new THREE.Box3().setFromObject(fbx);
+        const box    = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
         const size   = box.getSize(new THREE.Vector3());
         const fovRad = THREE.MathUtils.degToRad(camera.fov);
@@ -224,7 +224,7 @@ export default function TherapistScene({ objectPath, onReady, active = true, onP
         camera.position.set(center.x, center.y, center.z + zDist);
         camera.lookAt(center.x, center.y, center.z);
 
-        const store    = buildTherapistBoneStore(fbx);
+        const store    = buildTherapistBoneStore(model);
         const restData = buildRestData(store);
         const smoothed = new Map<THREE.Bone, THREE.Quaternion>();
         for (const [bone, rd] of restData) smoothed.set(bone, rd.localQuat.clone());
