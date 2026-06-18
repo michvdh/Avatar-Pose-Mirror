@@ -281,11 +281,15 @@ export default function TherapistScene({ objectPath, onReady, active = true, onP
       if (stopped) return;
       animFrameId = requestAnimationFrame(renderLoop);
 
-      const canSendPaused = needsPauseFrame && (videoEl?.readyState ?? 0) >= 2;
+      const videoReady = (videoEl?.readyState ?? 0) >= 2;
+      const canSendPaused = needsPauseFrame && videoReady;
+      // During init (before onReadyFired) always send frames so pose model
+      // can produce its first result even if autoplay is blocked.
+      const canSendInit = !onReadyFired && videoReady;
       if (
         poseInstance &&
-        (videoEl?.readyState ?? 0) >= 2 &&
-        (!videoEl?.paused || canSendPaused) &&
+        videoReady &&
+        (!videoEl?.paused || canSendPaused || canSendInit) &&
         !sendingFrame
       ) {
         if (canSendPaused) needsPauseFrame = false;
