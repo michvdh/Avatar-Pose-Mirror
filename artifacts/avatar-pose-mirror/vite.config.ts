@@ -69,6 +69,15 @@ export default defineConfig({
     fs: {
       strict: true,
     },
+    // Forward /api/* to the Express server when running locally.
+    // On Replit this is handled by the platform reverse-proxy before
+    // requests ever reach Vite, so this config is a no-op there.
+    proxy: {
+      "/api": {
+        target: `http://localhost:${process.env.API_PORT ?? 3001}`,
+        changeOrigin: true,
+      },
+    },
   },
   preview: {
     port,
