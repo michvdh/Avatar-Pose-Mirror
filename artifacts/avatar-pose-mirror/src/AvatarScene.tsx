@@ -298,7 +298,11 @@ function computeTargets(
 
 const ALPHA_BODY = 0.14;
 
-export default function AvatarScene() {
+export default function AvatarScene({
+  onPoseData,
+}: {
+  onPoseData?: (d: HolisticResults) => void;
+} = {}) {
   const mountRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   
@@ -323,10 +327,15 @@ export default function AvatarScene() {
   const torsoAnglesRef = useRef({ pitch: 0, lean: 0, yaw: 0 });
   const restShoulderSpanRef = useRef<number | null>(null);
 
+  // Stable ref so the holistic callback always calls the latest onPoseData
+  const onPoseDataRef = useRef(onPoseData);
+  onPoseDataRef.current = onPoseData;
+
   useMediaPipeHolistic(
     videoRef,
     (results) => {
       holisticDataRef.current = results;
+      onPoseDataRef.current?.(results);
       const hasBody = (results.poseLandmarks?.length ?? results.poseWorldLandmarks?.length ?? 0) > 0;
       if (hasBody)
         setStatus("Tracking body (Hands parked)");
