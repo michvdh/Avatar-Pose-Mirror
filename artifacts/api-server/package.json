@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm run build && node --env-file=.env.local --enable-source-maps ./dist/index.mjs",
+    "dev": "pnpm run build && node --env-file-if-exists=.env.local --enable-source-maps ./dist/index.mjs",
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
