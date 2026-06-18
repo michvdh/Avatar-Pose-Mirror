@@ -326,7 +326,8 @@ export default function AvatarScene({
   const fingerRestMapRef = useRef<Map<THREE.Bone, THREE.Quaternion>>(new Map());
   const torsoAnglesRef = useRef({ pitch: 0, lean: 0, yaw: 0 });
   const restShoulderSpanRef = useRef<number | null>(null);
-  const dotCanvasRef = useRef<HTMLCanvasElement>(null);
+  const dotCanvasRef  = useRef<HTMLCanvasElement>(null);
+  const dotBonesRef   = useRef<(THREE.Bone | null)[]>([]);
 
   // Stable ref so the holistic callback always calls the latest onPoseData
   const onPoseDataRef = useRef(onPoseData);
@@ -446,6 +447,28 @@ export default function AvatarScene({
         camera.lookAt(center.x, center.y, center.z);
 
         const store = buildBoneStore(model);
+
+        // Find the 6 joint bones for dot-rendering by exact suffix match
+        // (strips all non-letter chars so "mixamorig1:LeftHand" → "mixamoriglefthand"
+        //  which ends with "lefthand" but NOT "lefthandindex" etc.)
+        const normBoneName = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+        const findDotBone = (suffix: string): THREE.Bone | null => {
+          let found: THREE.Bone | null = null;
+          model.traverse((obj) => {
+            if (found || !(obj instanceof THREE.Bone)) return;
+            if (normBoneName(obj.name).endsWith(suffix)) found = obj as THREE.Bone;
+          });
+          return found;
+        };
+        dotBonesRef.current = [
+          findDotBone("leftarm"),      // L shoulder
+          findDotBone("rightarm"),     // R shoulder
+          findDotBone("leftforearm"),  // L elbow
+          findDotBone("rightforearm"), // R elbow
+          findDotBone("lefthand"),     // L wrist
+          findDotBone("righthand"),    // R wrist
+        ];
+
         model.updateMatrixWorld(true);
         const restData = captureRestData(store);
 
@@ -521,8 +544,8 @@ export default function AvatarScene({
 
       // ── Pulsing dots on Astra's joints ──────────────────────────────────
       const dotCanvas = dotCanvasRef.current;
-      const bs = boneStoreRef.current;
-      if (dotCanvas && bs) {
+      const dotBones  = dotBonesRef.current;
+      if (dotCanvas && dotBones.length > 0) {
         const ctx2d = dotCanvas.getContext("2d");
         if (ctx2d) {
           const W = dotCanvas.width, H = dotCanvas.height;
@@ -534,18 +557,12 @@ export default function AvatarScene({
           const green = Math.round(0   +  55 * p);
           const blue  = Math.round(0   +  55 * p);
 
-          const jointBones = [
-            bs.lUpperArm, bs.rUpperArm,  // shoulders
-            bs.lForeArm,  bs.rForeArm,   // elbows
-            bs.lHand,     bs.rHand,       // wrists
-          ];
-
           const wp = new THREE.Vector3();
-          for (const bone of jointBones) {
+          for (const bone of dotBones) {
             if (!bone) continue;
             bone.getWorldPosition(wp);
             const ndc = wp.clone().project(camera);
-            if (ndc.z > 1) continue; // behind camera
+            if (ndc.z > 1) continue; // behind camera / beyond far plane
             const sx = ( ndc.x * 0.5 + 0.5) * W;
             const sy = (-ndc.y * 0.5 + 0.5) * H;
 
