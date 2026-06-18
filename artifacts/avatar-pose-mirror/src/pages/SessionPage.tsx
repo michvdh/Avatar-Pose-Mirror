@@ -2,8 +2,6 @@ import { useSearch, useLocation } from "wouter";
 import { useState, useEffect, useRef } from "react";
 import AvatarScene from "../AvatarScene";
 import TherapistScene from "../TherapistScene";
-import PoseFeedbackOverlay, { TherapistPoseData } from "../PoseFeedbackOverlay";
-import type { HolisticResults } from "../useMediaPipeHolistic";
 
 export default function SessionPage() {
   const [, navigate] = useLocation();
@@ -15,11 +13,6 @@ export default function SessionPage() {
   const [astraReady, setAstraReady] = useState(false);
   const bothReady = suzieReady && astraReady;
   const [playing, setPlaying] = useState(false);
-
-  // Pose data refs — updated every frame by TherapistScene / AvatarScene,
-  // read every rAF frame by PoseFeedbackOverlay (no React re-renders needed)
-  const therapistDataRef = useRef<TherapistPoseData | null>(null);
-  const patientDataRef   = useRef<HolisticResults | null>(null);
 
   // Fade-out state: once both ready, animate the overlay away then unmount it
   const [overlayVisible, setOverlayVisible] = useState(true);
@@ -60,17 +53,8 @@ export default function SessionPage() {
     <div
       style={{ width: "100vw", height: "100vh", overflow: "hidden", position: "relative" }}
     >
-      {/* Full-screen patient avatar — receives onPoseData to share landmarks */}
-      <AvatarScene
-        onPoseData={(d) => { patientDataRef.current = d; }}
-      />
-
-      {/* Pose feedback overlay — compares therapist vs patient and draws indicators */}
-      <PoseFeedbackOverlay
-        therapistDataRef={therapistDataRef}
-        patientDataRef={patientDataRef}
-        active={bothReady}
-      />
+      {/* Full-screen patient avatar */}
+      <AvatarScene />
 
       {/* Therapist panel — fixed left overlay */}
       <div
@@ -133,9 +117,6 @@ export default function SessionPage() {
                 objectPath={objectPath}
                 onReady={() => setSuzieReady(true)}
                 active={bothReady && playing}
-                onPoseFrame={(world, image) => {
-                  therapistDataRef.current = { world, image };
-                }}
               />
               {/* Play button — shown after loading, before first play */}
               {bothReady && !playing && (

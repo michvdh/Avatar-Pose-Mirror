@@ -326,6 +326,7 @@ export default function AvatarScene({
   const fingerRestMapRef = useRef<Map<THREE.Bone, THREE.Quaternion>>(new Map());
   const torsoAnglesRef = useRef({ pitch: 0, lean: 0, yaw: 0 });
   const restShoulderSpanRef = useRef<number | null>(null);
+  const dotCanvasRef = useRef<HTMLCanvasElement>(null);
 
   // Stable ref so the holistic callback always calls the latest onPoseData
   const onPoseDataRef = useRef(onPoseData);
@@ -362,6 +363,10 @@ export default function AvatarScene({
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000);
     mountEl.appendChild(renderer.domElement);
+
+    // Init dot canvas dimensions
+    const dc = dotCanvasRef.current;
+    if (dc) { dc.width = window.innerWidth; dc.height = window.innerHeight; }
 
     const scene = new THREE.Scene();
     
@@ -513,6 +518,48 @@ export default function AvatarScene({
       }
 
       renderer.render(scene, camera);
+
+      // ── Pulsing dots on Astra's joints ──────────────────────────────────
+      const dotCanvas = dotCanvasRef.current;
+      const bs = boneStoreRef.current;
+      if (dotCanvas && bs) {
+        const ctx2d = dotCanvas.getContext("2d");
+        if (ctx2d) {
+          const W = dotCanvas.width, H = dotCanvas.height;
+          ctx2d.clearRect(0, 0, W, H);
+
+          const phase = (performance.now() / 600) % 1;
+          const p = 0.5 + 0.5 * Math.sin(phase * Math.PI * 2);
+          const red   = Math.round(110 + 145 * p);
+          const green = Math.round(0   +  55 * p);
+          const blue  = Math.round(0   +  55 * p);
+
+          const jointBones = [
+            bs.lUpperArm, bs.rUpperArm,  // shoulders
+            bs.lForeArm,  bs.rForeArm,   // elbows
+            bs.lHand,     bs.rHand,       // wrists
+          ];
+
+          const wp = new THREE.Vector3();
+          for (const bone of jointBones) {
+            if (!bone) continue;
+            bone.getWorldPosition(wp);
+            const ndc = wp.clone().project(camera);
+            if (ndc.z > 1) continue; // behind camera
+            const sx = ( ndc.x * 0.5 + 0.5) * W;
+            const sy = (-ndc.y * 0.5 + 0.5) * H;
+
+            ctx2d.save();
+            ctx2d.shadowColor = `rgba(${red},${green},${blue},0.7)`;
+            ctx2d.shadowBlur  = 14;
+            ctx2d.beginPath();
+            ctx2d.arc(sx, sy, 8, 0, Math.PI * 2);
+            ctx2d.fillStyle = `rgb(${red},${green},${blue})`;
+            ctx2d.fill();
+            ctx2d.restore();
+          }
+        }
+      }
     }
     renderLoop();
 
@@ -520,6 +567,8 @@ export default function AvatarScene({
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      const c = dotCanvasRef.current;
+      if (c) { c.width = window.innerWidth; c.height = window.innerHeight; }
     };
     window.addEventListener("resize", onResize);
 
@@ -534,6 +583,19 @@ export default function AvatarScene({
   return (
     <div style={{ width: "100vw", height: "100vh", overflow: "hidden", background: bgColor }}>
       <div ref={mountRef} style={{ position: "absolute", inset: 0 }} />
+
+      {/* Dot overlay — pulsing red dots projected from Astra's bone world-positions */}
+      <canvas
+        ref={dotCanvasRef}
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          pointerEvents: "none",
+          zIndex: 5,
+        }}
+      />
 
       <div
         style={{
